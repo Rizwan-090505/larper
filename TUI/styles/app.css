@@ -1,0 +1,247 @@
+/* ─── Global ──────────────────────────────────────────────────────────────── */
+
+Screen {
+    background: #1a1b26;
+    color: #c0caf5;
+    layout: vertical;
+}
+
+#app-header {
+    height: 1;
+    background: #7aa2f7;
+    color: #1a1b26;
+    text-style: bold;
+    padding: 0 2;
+    dock: top;
+}
+
+/* ─── Scrollbars ──────────────────────────────────────────────────────────── */
+
+* {
+    scrollbar-color: #7aa2f7;
+    scrollbar-color-hover: #bb9af7;
+    scrollbar-background: #1e2030;
+    scrollbar-size: 1 1;
+}
+
+/* ─── Input ───────────────────────────────────────────────────────────────── */
+
+ChatInput {
+    height: 3;
+    border: solid #7aa2f7;
+    background: #1e2030;
+    padding: 0 1;
+}
+
+ChatInput Input {
+    background: transparent;
+    border: none;
+    color: #c0caf5;
+}
+
+ChatInput Input:focus {
+    border: none;
+    background: transparent;
+}
+
+/* ─── Agent Panel ─────────────────────────────────────────────────────────── */
+
+AgentPanel {
+    border: solid #7aa2f7;
+    background: #1e2030;
+}
+
+AgentPanel .panel-title {
+    background: #7aa2f7;
+    color: #1a1b26;
+    text-style: bold;
+    padding: 0 1;
+}
+
+AgentPanel RichLog {
+    background: transparent;
+    padding: 0 1;
+    color: #c0caf5;
+}
+
+/* ─── Todos ───────────────────────────────────────────────────────────────── */
+
+TodosPanel {
+    border: solid #9ece6a;
+    background: #1e2030;
+}
+
+TodosPanel .panel-title {
+    background: #9ece6a;
+    color: #1a1b26;
+    text-style: bold;
+    padding: 0 1;
+    height: 1;
+}
+
+TodosPanel ListView {
+    background: transparent;
+    border: none;
+}
+
+TodoItem {
+    background: transparent;
+    color: #c0caf5;
+    padding: 0 1;
+    height: auto;
+}
+
+TodoItem.highlighted {
+    background: #9ece6a 25%;
+}
+
+/* ─── Events ──────────────────────────────────────────────────────────────── */
+
+EventsPanel {
+    border: solid #e0af68;
+    background: #1e2030;
+}
+
+EventsPanel .panel-title {
+    background: #e0af68;
+    color: #1a1b26;
+    text-style: bold;
+    padding: 0 1;
+    height: 1;
+}
+
+EventsPanel ListView {
+    background: transparent;
+    border: none;
+}
+
+EventItem {
+    background: transparent;
+    color: #c0caf5;
+    padding: 0 1;
+    height: auto;
+}
+
+EventItem.highlighted {
+    background: #e0af68 25%;
+}
+
+/* ─── Notes ───────────────────────────────────────────────────────────────── */
+
+NotesPanel {
+    border: solid #bb9af7;
+    background: #1e2030;
+}
+
+NotesPanel .panel-title {
+    background: #bb9af7;
+    color: #1a1b26;
+    text-style: bold;
+    padding: 0 1;
+    height: 1;
+}
+
+NotesPanel ListView {
+    background: transparent;
+    border: none;
+}
+
+NoteItem {
+    background: transparent;
+    color: #c0caf5;
+    padding: 0 1;
+    height: auto;
+}
+
+NoteItem:hover {
+    background: #bb9af7 20%;
+}
+
+/* ─── Vim Panel ───────────────────────────────────────────────────────────── */
+
+VimPanel {
+    border: solid #7aa2f7;
+    background: #1a1b26;
+}
+
+VimPanel .vim-title {
+    background: #7aa2f7;
+    color: #1a1b26;
+    text-style: bold;
+    padding: 0 1;
+    height: 1;
+}
+
+VimPanel #vim-content {
+    padding: 0 1;
+    color: #c0caf5;
+    overflow-y: auto;
+}
+
+/* ─── Tab Bar ─────────────────────────────────────────────────────────────── */
+
+TabBar {
+    height: 1;
+    background: #1e2030;
+    border-top: solid #3b4261;
+    padding: 0 1;
+    layout: horizontal;
+    overflow-x: auto;
+}
+
+TabBar .tab {
+    padding: 0 2;
+    color: #565f89;
+    background: transparent;
+    height: 1;
+}
+
+TabBar .tab.active {
+    background: #7aa2f7;
+    color: #1a1b26;
+    text-style: bold;
+}
+
+/* ─── Status Bar ──────────────────────────────────────────────────────────── */
+
+StatusBar {
+    height: 1;
+    background: #7aa2f7;
+    color: #1a1b26;
+    dock: bottom;
+    layout: horizontal;
+    padding: 0 1;
+}
+
+StatusBar Static {
+    background: transparent;
+    color: #1a1b26;
+    height: 1;
+    width: 1fr;
+}
+
+/* ─── Layout Columns ──────────────────────────────────────────────────────── */
+
+#main-col {
+    width: 70%;
+    height: 1fr;
+    layout: vertical;
+}
+
+#dash-col {
+    width: 30%;
+    height: 1fr;
+    layout: vertical;
+    border-left: solid #3b4261;
+}
+
+#vim-col {
+    width: 50%;
+    height: 1fr;
+    layout: vertical;
+}
+
+#vim-row {
+    height: 1fr;
+    layout: horizontal;
+}
