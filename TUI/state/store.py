@@ -11,18 +11,27 @@ class Item:
     text: str
     file: str
     created_at: datetime
-    time: Optional[str] = None  # HH:MM for events
+    time: Optional[str] = None
 
     def is_event(self) -> bool:
         return self.time is not None
 
 
+@dataclass
+class NoteContent:
+    id: str
+    text: str
+    file: str
+    created_at: datetime
+
+
 class Store:
     def __init__(self):
         self._items: dict[str, Item] = {}
-        self._files: dict[str, list[str]] = {}  # file -> list of item ids
+        self._note_contents: dict[str, list[NoteContent]] = {}
+        self._files: dict[str, list[str]] = {}
         self._current_file: Optional[str] = None
-        self._notes: list[str] = ["README.md", "notes.md", "todo.md"]
+        self._notes: list[str] = []
 
     def get_current_file(self) -> Optional[str]:
         return self._current_file
@@ -48,6 +57,18 @@ class Store:
         self._files.setdefault(self._current_file, []).append(item.id)
         return item
 
+    def add_note_content(self, text: str) -> Optional[NoteContent]:
+        if not self._current_file:
+            return None
+        nc = NoteContent(
+            id=str(uuid.uuid4())[:8],
+            text=text,
+            file=self._current_file,
+            created_at=datetime.now(),
+        )
+        self._note_contents.setdefault(self._current_file, []).append(nc)
+        return nc
+
     def get_todos(self) -> list[Item]:
         if not self._current_file:
             return []
@@ -69,11 +90,11 @@ class Store:
     def get_notes(self) -> list[str]:
         return list(self._notes)
 
+    def get_note_contents(self, filename: str) -> list[NoteContent]:
+        return self._note_contents.get(filename, [])
+
     def get_file_content(self, filename: str) -> list[Item]:
-        return [
-            self._items[iid]
-            for iid in self._files.get(filename, [])
-        ]
+        return [self._items[iid] for iid in self._files.get(filename, [])]
 
     def add_note_file(self, filename: str):
         if filename not in self._notes:
@@ -82,5 +103,4 @@ class Store:
             self._files[filename] = []
 
 
-# Global singleton
 store = Store()

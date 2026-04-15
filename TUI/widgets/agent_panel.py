@@ -1,11 +1,12 @@
 from textual.widget import Widget
 from textual.app import ComposeResult
 from textual.widgets import Static, RichLog
-from textual.reactive import reactive
+from datetime import datetime
+import asyncio
 
 
 class AgentPanel(Widget):
-    """Main output/content panel — UI container only."""
+    """Chat-style panel — user messages + agent replies."""
 
     DEFAULT_CSS = """
     AgentPanel {
@@ -30,27 +31,41 @@ class AgentPanel(Widget):
     """
 
     def compose(self) -> ComposeResult:
-        yield Static("  ⚡ OUTPUT", classes="panel-title")
+        yield Static("  ⚡ WORKSPACE", classes="panel-title")
         yield RichLog(id="output-log", highlight=True, markup=True, wrap=True)
 
     def on_mount(self):
         log = self.query_one("#output-log", RichLog)
-        log.write("[dim]DevWorkspace ready.[/dim]")
-        log.write("[dim]Open a note or type a command below.[/dim]")
         log.write("")
-        log.write("[bold]Commands:[/bold]")
+        log.write("[bold cyan]  Welcome to DevWorkspace[/bold cyan]")
+        log.write("[dim]  ─────────────────────────────────────[/dim]")
+        log.write("")
+        log.write("  Type anything to add a note.")
+        log.write("  Or use structured commands:")
+        log.write("")
         log.write("  [green]add task[/green] [white]<text>[/white]")
         log.write("  [yellow]add event[/yellow] [white]<text>[/white] [dim]at HH:MM[/dim]")
+        log.write("")
+        log.write("  [dim]Click a file in NOTES panel to open it.[/dim]")
+        log.write("")
+        log.write("[dim]  ─────────────────────────────────────[/dim]")
+        log.write("")
+
+    def log_user(self, msg: str):
+        log = self.query_one("#output-log", RichLog)
+        ts = datetime.now().strftime("%H:%M")
+        log.write(f"  [bold white]You[/bold white] [dim]{ts}[/dim]")
+        log.write(f"  [white]  {msg}[/white]")
+        log.write("")
+
+    def log_agent(self, msg: str):
+        log = self.query_one("#output-log", RichLog)
+        ts = datetime.now().strftime("%H:%M")
+        log.write(f"  [bold cyan]Agent[/bold cyan] [dim]{ts}[/dim]")
+        log.write(f"  [cyan]  {msg}[/cyan]")
+        log.write("")
 
     def log_message(self, msg: str):
         log = self.query_one("#output-log", RichLog)
-        log.write(msg)
-
-    def log_item_added(self, kind: str, text: str, time: str = ""):
-        log = self.query_one("#output-log", RichLog)
-        if kind == "task":
-            log.write(f"[green]✓ Task added:[/green] {text}")
-        elif kind == "event":
-            log.write(f"[yellow]◷ Event added:[/yellow] {text} [dim]at {time}[/dim]")
-        elif kind == "error":
-            log.write(f"[red]✗ {text}[/red]")
+        log.write(f"  {msg}")
+        log.write("")

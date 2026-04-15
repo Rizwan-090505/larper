@@ -15,6 +15,43 @@ Screen {
     dock: top;
 }
 
+/* ─── Transitions ─────────────────────────────────────────────────────────── */
+
+DefaultLayout {
+    opacity: 1.0;
+    transition: opacity 200ms linear;
+}
+
+VimLayout {
+    opacity: 1.0;
+    transition: opacity 200ms linear;
+}
+
+VimPanel {
+    opacity: 1.0;
+    transition: opacity 300ms linear;
+}
+
+TodosPanel {
+    opacity: 1.0;
+    transition: opacity 300ms linear;
+}
+
+EventsPanel {
+    opacity: 1.0;
+    transition: opacity 300ms linear;
+}
+
+NotesPanel {
+    opacity: 1.0;
+    transition: opacity 300ms linear;
+}
+
+AgentPanel {
+    opacity: 1.0;
+    transition: opacity 250ms linear;
+}
+
 /* ─── Scrollbars ──────────────────────────────────────────────────────────── */
 
 * {
@@ -44,7 +81,7 @@ ChatInput Input:focus {
     background: transparent;
 }
 
-/* ─── Agent Panel ─────────────────────────────────────────────────────────── */
+/* ─── Agent / Chat Panel ──────────────────────────────────────────────────── */
 
 AgentPanel {
     border: solid #7aa2f7;
@@ -187,6 +224,8 @@ TabBar {
     padding: 0 1;
     layout: horizontal;
     overflow-x: auto;
+    opacity: 1.0;
+    transition: opacity 200ms linear;
 }
 
 TabBar .tab {

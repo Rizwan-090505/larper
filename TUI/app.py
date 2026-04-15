@@ -25,9 +25,9 @@ class DevWorkspaceApp(App):
     CSS_PATH = "styles/app.css"
     TITLE = "DevWorkspace"
     BINDINGS = [
-        ("ctrl+q", "quit", "Quit"),
-        ("ctrl+d", "toggle_mode", "Toggle Vim Mode"),
-        ("ctrl+f", "focus_input", "Focus Input"),
+        ("f1", "toggle_mode", "Toggle Vim Mode"),
+        ("f2", "focus_input", "Focus Input"),
+        ("f10", "quit", "Quit"),
     ]
 
     def __init__(self):
@@ -35,23 +35,33 @@ class DevWorkspaceApp(App):
         self._vim_mode = False
 
     def compose(self) -> ComposeResult:
-        yield Static("  ⚡ DevWorkspace", id="app-header")
+        yield Static(
+            "  ⚡ DevWorkspace    [dim]F1[/dim] Toggle Vim   [dim]F2[/dim] Focus Input   [dim]F10[/dim] Quit",
+            id="app-header"
+        )
         yield DefaultLayout(id="default-layout")
         yield StatusBar(id="status-bar")
 
     def on_mount(self):
-        # Pre-load some demo notes
         store.add_note_file("README.md")
         store.add_note_file("notes.md")
         store.add_note_file("todo.md")
         self._focus_input()
 
-    # ─── Input Handling ──────────────────────────────────────────────────────
+    # ─── Input Handling ───────────────────────────────────────────────────────
 
     def on_chat_input_submitted(self, event: ChatInput.Submitted):
-        self._handle_command(event.value)
+        self._handle_input(event.value)
 
-    def _handle_command(self, raw: str):
+    def _handle_input(self, raw: str):
+        raw = raw.strip()
+        if not raw:
+            return
+
+        # Show user message in chat
+        self._log_user(raw)
+
+        # Parse strict commands OR treat as free-form note/query
         task_match = ADD_TASK_RE.match(raw)
         event_match = ADD_EVENT_RE.match(raw)
 
@@ -63,56 +73,59 @@ class DevWorkspaceApp(App):
             time = event_match.group(2).strip()
             self._add_event(text, time)
         else:
-            self._show_error("Invalid command. Use: add task <text>  |  add event <text> at HH:MM")
+            # Free-form input — store as note content, show agent placeholder
+            self._handle_freeform(raw)
 
         self._focus_input()
 
+    def _handle_freeform(self, text: str):
+        """Accept any free-form text — store it, show agent placeholder reply."""
+        if store.get_current_file():
+            store.add_note_content(text)
+            self._update_vim_panel(f"  {text}")
+
+        # Agent placeholder response
+        self._log_agent(
+            "📝 Note saved. "
+            "[dim](Agent will analyze this for tasks, events, and insights.)[/dim]"
+        )
+        self._set_status("Note saved")
+
     def _add_task(self, text: str):
         if not store.get_current_file():
-            self._show_error("No file open. Click a note to open it first.")
+            self._log_agent("[yellow]⚠ Open a file first — click any note on the right.[/yellow]")
             return
         item = store.add_item(text)
         if item:
             self._update_todos_panel(item)
             self._update_vim_panel(f"[ ] {text}")
-            self._log(f"[green]✓ Task added:[/green] {text}")
+            self._log_agent(f"[green]✓ Task added:[/green] {text}")
             self._set_status(f"Task added: {text}")
 
     def _add_event(self, text: str, time: str):
         if not store.get_current_file():
-            self._show_error("No file open. Click a note to open it first.")
+            self._log_agent("[yellow]⚠ Open a file first — click any note on the right.[/yellow]")
             return
         item = store.add_item(text, time=time)
         if item:
             self._update_events_panel(item)
             self._update_vim_panel(f"[{time}] {text}")
-            self._log(f"[yellow]◷ Event added:[/yellow] {text} at {time}")
+            self._log_agent(f"[yellow]◷ Event added:[/yellow] {text} at {time}")
             self._set_status(f"Event added: {text} at {time}")
 
-    def _show_error(self, msg: str):
-        self._log(f"[red]✗ {msg}[/red]")
-        self._set_status(msg)
+    # ─── Chat Logging ─────────────────────────────────────────────────────────
 
-    # ─── Panel Updates ───────────────────────────────────────────────────────
-
-    def _update_todos_panel(self, item):
+    def _log_user(self, msg: str):
         try:
-            panel = self.query_one("#todos-panel", TodosPanel)
-            panel.add_todo(item)
+            panel = self.query_one("#agent-panel", AgentPanel)
+            panel.log_user(msg)
         except NoMatches:
             pass
 
-    def _update_events_panel(self, item):
+    def _log_agent(self, msg: str):
         try:
-            panel = self.query_one("#events-panel", EventsPanel)
-            panel.add_event(item)
-        except NoMatches:
-            pass
-
-    def _update_vim_panel(self, line: str):
-        try:
-            vim = self.query_one("#vim-panel", VimPanel)
-            vim.append_line(line)
+            panel = self.query_one("#agent-panel", AgentPanel)
+            panel.log_agent(msg)
         except NoMatches:
             pass
 
@@ -137,7 +150,27 @@ class DevWorkspaceApp(App):
         except NoMatches:
             pass
 
-    # ─── Notes Panel ─────────────────────────────────────────────────────────
+    # ─── Panel Updates ────────────────────────────────────────────────────────
+
+    def _update_todos_panel(self, item):
+        try:
+            self.query_one("#todos-panel", TodosPanel).add_todo(item)
+        except NoMatches:
+            pass
+
+    def _update_events_panel(self, item):
+        try:
+            self.query_one("#events-panel", EventsPanel).add_event(item)
+        except NoMatches:
+            pass
+
+    def _update_vim_panel(self, line: str):
+        try:
+            self.query_one("#vim-panel", VimPanel).append_line(line)
+        except NoMatches:
+            pass
+
+    # ─── File Open ────────────────────────────────────────────────────────────
 
     def on_notes_panel_file_selected(self, event: NotesPanel.FileSelected):
         self._open_file(event.filename)
@@ -152,84 +185,120 @@ class DevWorkspaceApp(App):
                 vim.load_file(filename)
                 tabs = self.query_one("#tab-bar", TabBar)
                 tabs.open_file(filename)
+                self.query_one("#todos-panel", TodosPanel).refresh_todos()
+                self.query_one("#events-panel", EventsPanel).refresh_events()
             except NoMatches:
                 pass
-
-        try:
-            todos = self.query_one("#todos-panel", TodosPanel)
-            todos.refresh_todos()
-            events = self.query_one("#events-panel", EventsPanel)
-            events.refresh_events()
-        except NoMatches:
-            pass
 
         try:
             sb = self.query_one("#status-bar", StatusBar)
             sb.current_file = filename
+            sb.set_message(f"Opened {filename}")
         except NoMatches:
             pass
 
-        self._log(f"[cyan]📄 Opened:[/cyan] {filename}")
+        self._log_agent(f"[cyan]📄 Opened:[/cyan] [bold]{filename}[/bold]  — start typing to add notes.")
         self._focus_input()
 
-    # ─── Layout Switching ────────────────────────────────────────────────────
+    # ─── Layout Switch with Animations ───────────────────────────────────────
 
     def _switch_to_vim_mode(self):
         self._vim_mode = True
-        try:
-            dl = self.query_one("#default-layout", DefaultLayout)
-            dl.remove()
-        except NoMatches:
-            pass
 
-        vim_layout = VimLayout(id="vim-layout")
-        self.mount(vim_layout, before="#status-bar")
+        async def do_switch():
+            try:
+                dl = self.query_one("#default-layout", DefaultLayout)
+                dl.styles.animate("opacity", value=0.0, duration=0.18)
+                await asyncio.sleep(0.2)
+                dl.remove()
+            except NoMatches:
+                pass
 
-        async def post_mount():
-            await asyncio.sleep(0.05)
+            vim_layout = VimLayout(id="vim-layout")
+            self.mount(vim_layout, before="#status-bar")
+            vim_layout.styles.opacity = 0.0
+            await asyncio.sleep(0.03)
+            vim_layout.styles.animate("opacity", value=1.0, duration=0.22)
+            await asyncio.sleep(0.12)
+
             if store.get_current_file():
                 try:
                     vim = self.query_one("#vim-panel", VimPanel)
+                    vim.styles.opacity = 0.0
                     vim.load_file(store.get_current_file())
+                    vim.styles.animate("opacity", value=1.0, duration=0.28)
+
                     tabs = self.query_one("#tab-bar", TabBar)
                     tabs.open_file(store.get_current_file())
-                    todos = self.query_one("#todos-panel", TodosPanel)
-                    todos.refresh_todos()
-                    events = self.query_one("#events-panel", EventsPanel)
-                    events.refresh_events()
-                    notes = self.query_one("#notes-panel", NotesPanel)
-                    notes.refresh_notes()
+
+                    await asyncio.sleep(0.06)
+
+                    for panel_id, cls in [
+                        ("#todos-panel", TodosPanel),
+                        ("#events-panel", EventsPanel),
+                        ("#notes-panel", NotesPanel),
+                    ]:
+                        try:
+                            w = self.query_one(panel_id, cls)
+                            w.styles.opacity = 0.0
+                            if hasattr(w, "refresh_todos"):
+                                w.refresh_todos()
+                            elif hasattr(w, "refresh_events"):
+                                w.refresh_events()
+                            elif hasattr(w, "refresh_notes"):
+                                w.refresh_notes()
+                            w.styles.animate("opacity", value=1.0, duration=0.25)
+                            await asyncio.sleep(0.06)
+                        except NoMatches:
+                            pass
                 except NoMatches:
                     pass
+
             self._focus_input()
 
-        asyncio.get_event_loop().create_task(post_mount())
+        asyncio.get_event_loop().create_task(do_switch())
 
     def _switch_to_default_mode(self):
         self._vim_mode = False
-        try:
-            vl = self.query_one("#vim-layout", VimLayout)
-            vl.remove()
-        except NoMatches:
-            pass
 
-        dl = DefaultLayout(id="default-layout")
-        self.mount(dl, before="#status-bar")
-
-        async def post_mount():
-            await asyncio.sleep(0.05)
+        async def do_switch():
             try:
-                notes = self.query_one("#notes-panel", NotesPanel)
-                notes.refresh_notes()
-                todos = self.query_one("#todos-panel", TodosPanel)
-                todos.refresh_todos()
-                events = self.query_one("#events-panel", EventsPanel)
-                events.refresh_events()
+                vl = self.query_one("#vim-layout", VimLayout)
+                vl.styles.animate("opacity", value=0.0, duration=0.18)
+                await asyncio.sleep(0.2)
+                vl.remove()
             except NoMatches:
                 pass
+
+            dl = DefaultLayout(id="default-layout")
+            self.mount(dl, before="#status-bar")
+            dl.styles.opacity = 0.0
+            await asyncio.sleep(0.03)
+            dl.styles.animate("opacity", value=1.0, duration=0.22)
+            await asyncio.sleep(0.12)
+
+            for panel_id, cls in [
+                ("#notes-panel", NotesPanel),
+                ("#todos-panel", TodosPanel),
+                ("#events-panel", EventsPanel),
+            ]:
+                try:
+                    w = self.query_one(panel_id, cls)
+                    w.styles.opacity = 0.0
+                    if hasattr(w, "refresh_notes"):
+                        w.refresh_notes()
+                    elif hasattr(w, "refresh_todos"):
+                        w.refresh_todos()
+                    elif hasattr(w, "refresh_events"):
+                        w.refresh_events()
+                    w.styles.animate("opacity", value=1.0, duration=0.25)
+                    await asyncio.sleep(0.06)
+                except NoMatches:
+                    pass
+
             self._focus_input()
 
-        asyncio.get_event_loop().create_task(post_mount())
+        asyncio.get_event_loop().create_task(do_switch())
 
     # ─── Actions ─────────────────────────────────────────────────────────────
 
