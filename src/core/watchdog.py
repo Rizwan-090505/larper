@@ -10,11 +10,19 @@ from config import settings
 
 
 class LARPEREventHandler(FileSystemEventHandler):
-    def __init__(self, loop: asyncio.AbstractEventLoop):
+    def __init__(self, loop: asyncio.AbstractEventLoop, watch_paths: list[Path]):
         self.loop = loop
+        # FIX Bug 3: Store the resolved watch roots so _should_track checks
+        # against the actual watched directories, not just any folder named
+        # "pages" or "journals" anywhere in the absolute path.
+        self.watch_roots = {p.resolve() for p in watch_paths}
 
     def _should_track(self, path: Path) -> bool:
-        return any(part in {"pages", "journals"} for part in path.parts)
+        resolved = path.resolve()
+        return any(
+            resolved == root or root in resolved.parents
+            for root in self.watch_roots
+        )
 
     def _enqueue(self, path: Path, event_type: str) -> None:
         if not self._should_track(path):
@@ -40,24 +48,33 @@ class LARPEREventHandler(FileSystemEventHandler):
             self._enqueue(Path(event.src_path), "deleted")
 
 
+# FIX Bug 1: This is now a self-contained async function that manages the
+# observer lifecycle internally. main.py runs it as a task via
+# asyncio.create_task(), not as a regular function call expecting a return value.
 async def start_watchdog() -> None:
     loop = asyncio.get_running_loop()
 
-    base_path = Path(settings.ACTIVE_FOLDER)
+    base_path = Path(settings.ACTIVE_FOLDER).resolve()
 
     watch_paths = [
         base_path / "pages",
         base_path / "journals",
     ]
 
+    # FIX Bug 2: Always create the watch directories before scheduling.
+    # Previously, non-existent paths were silently skipped, meaning no events
+    # would ever fire for them.
+    for path in watch_paths:
+        path.mkdir(parents=True, exist_ok=True)
+
     observer = Observer()
-    handler = LARPEREventHandler(loop)
+    handler = LARPEREventHandler(loop, watch_paths)
 
     for path in watch_paths:
-        if path.exists():
-            observer.schedule(handler, str(path), recursive=True)
+        observer.schedule(handler, str(path), recursive=True)
 
     observer.start()
+    print(f"Watchdog started. Monitoring: {[str(p) for p in watch_paths]}")
 
     try:
         while True:
@@ -65,3 +82,4 @@ async def start_watchdog() -> None:
     finally:
         observer.stop()
         observer.join()
+        print("Watchdog stopped.")

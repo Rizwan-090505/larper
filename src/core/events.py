@@ -7,3 +7,10 @@ from typing import Literal
 class FileEvent:
     path: Path
     event_type: Literal["created", "modified", "deleted"]
+
+@dataclass(slots=True)
+class ParseEvent:
+    path: Path
+    raw_content: str
+    note_type: str
+    event_type: str
