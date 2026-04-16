@@ -9,7 +9,7 @@ from src.core.events import FileEvent
 from config import settings
 
 
-class ARPEREventHandler(FileSystemEventHandler):
+class LARPEREventHandler(FileSystemEventHandler):
     def __init__(self, loop: asyncio.AbstractEventLoop):
         self.loop = loop
 
@@ -51,7 +51,7 @@ async def start_watchdog() -> None:
     ]
 
     observer = Observer()
-    handler = ARPEREventHandler(loop)
+    handler = LARPEREventHandler(loop)
 
     for path in watch_paths:
         if path.exists():
