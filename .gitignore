@@ -8,6 +8,11 @@ ENV/
 uv_env/
 uv.lock.bak
 
+
+notes.db
+notes.db-shm
+notes.db-wal
+
 __pycache__/
 *.py[cod]
 *$py.class
