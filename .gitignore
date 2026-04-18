@@ -9,3 +9,4 @@ wheels/
 notes.db
 # Virtual environments
 .venv
+.env
