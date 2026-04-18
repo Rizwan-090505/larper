@@ -27,6 +27,8 @@ class DevWorkspaceApp(App):
     BINDINGS = [
         ("f1", "toggle_mode", "Toggle Vim Mode"),
         ("f2", "focus_input", "Focus Input"),
+        ("f3", "new_page", "New Page (vim)"),
+        ("f4", "new_journal", "New Journal (vim)"),
         ("f10", "quit", "Quit"),
     ]
 
@@ -36,7 +38,7 @@ class DevWorkspaceApp(App):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "  ⚡ DevWorkspace    [dim]F1[/dim] Toggle Vim   [dim]F2[/dim] Focus Input   [dim]F10[/dim] Quit",
+            "  ⚡ DevWorkspace    [dim]F1[/dim] Toggle Vim   [dim]F2[/dim] Focus Input   [dim]F3[/dim] New Page   [dim]F4[/dim] New Journal   [dim]F10[/dim] Quit",
             id="app-header"
         )
         yield DefaultLayout(id="default-layout")
@@ -58,10 +60,8 @@ class DevWorkspaceApp(App):
         if not raw:
             return
 
-        # Show user message in chat
         self._log_user(raw)
 
-        # Parse strict commands OR treat as free-form note/query
         task_match = ADD_TASK_RE.match(raw)
         event_match = ADD_EVENT_RE.match(raw)
 
@@ -73,18 +73,15 @@ class DevWorkspaceApp(App):
             time = event_match.group(2).strip()
             self._add_event(text, time)
         else:
-            # Free-form input — store as note content, show agent placeholder
             self._handle_freeform(raw)
 
         self._focus_input()
 
     def _handle_freeform(self, text: str):
-        """Accept any free-form text — store it, show agent placeholder reply."""
         if store.get_current_file():
             store.add_note_content(text)
             self._update_vim_panel(f"  {text}")
 
-        # Agent placeholder response
         self._log_agent(
             "📝 Note saved. "
             "[dim](Agent will analyze this for tasks, events, and insights.)[/dim]"
@@ -313,3 +310,33 @@ class DevWorkspaceApp(App):
 
     def action_quit(self):
         self.exit()
+
+    def action_new_page(self):
+        self._open_vim_note("pages")
+
+    def action_new_journal(self):
+        self._open_vim_note("journals")
+
+    def _open_vim_note(self, subdir: str):
+        async def _launch():
+            if not self._vim_mode:
+                self._switch_to_vim_mode()
+                await asyncio.sleep(0.35)
+            try:
+                vim = self.query_one("#vim-panel", VimPanel)
+                await vim.open_vim_and_save(subdir)
+            except Exception as exc:
+                self._log_agent(f"[red]✗ Could not open vim:[/red] {exc}")
+        asyncio.get_event_loop().create_task(_launch())
+
+    def on_vim_panel_note_saved(self, event: VimPanel.NoteSaved):
+        rel = event.filepath.relative_to(store.get_active_folder())
+        self._log_agent(
+            f"[green]✓ Saved[/green] [bold]{rel}[/bold]"
+            f"  →  [dim]{event.filepath}[/dim]"
+        )
+        self._set_status(f"Saved {rel}")
+        try:
+            self.query_one("#notes-panel", NotesPanel).refresh_notes()
+        except Exception:
+            pass
