@@ -25,6 +25,7 @@ class LARPEREventHandler(FileSystemEventHandler):
         )
 
     def _enqueue(self, path: Path, event_type: str) -> None:
+        print(f"[WATCHDOG EVENT] {event_type} → {path}")  # Debug log for visibility
         if not self._should_track(path):
             return
 

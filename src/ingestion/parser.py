@@ -9,6 +9,7 @@ from mdit_py_plugins.front_matter import front_matter_plugin
 import re
 from src.core.queue import parser_queue
 from src.core.events import ParseEvent
+from src.ingestion.db import upsert_note, insert_blocks, insert_tasks
 
 TASK_PATTERN = re.compile(r'^(?:\[([ xX])\]|TODO)\s+(.+)')
 DUE_DATE_PATTERN = re.compile(r'(?:due:|@due)\s*(\d{4}-\d{2}-\d{2})', re.IGNORECASE)
@@ -122,28 +123,16 @@ async def parser_worker() -> None:
             event: ParseEvent = await parser_queue.get()
             title, blocks, tasks = parse_markdown(event.path, event.raw_content)
 
-            # --- MOCK DB OUTPUT START ---
-            print(f"\n{'='*50}")
-            print(f"🛠️  MOCK DB ACTION: UPSERT NOTE ({event.event_type.upper()})")
-            print(f"File Path: {event.path}")
-            print(f"Title: {title}")
-            print(f"Type: {event.note_type}")
+            # Upsert note to DB
+            note_id = await upsert_note(event.path, title, event.note_type, event.raw_content, event.event_type)
+            
+            # Insert blocks
+            await insert_blocks(note_id, blocks)
+            
+            # Insert tasks
+            await insert_tasks(note_id, tasks)
 
-            print(f"\n🧩 EXTRACTED BLOCKS ({len(blocks)} total):")
-            for b in blocks:
-                # Provide a safer get for indenting, defaulting to empty string
-                indent = "  " * (b.get('level', 0) or 0)
-                parent_info = f" (Parent Pos: {b['parent_block']})" if b['parent_block'] is not None else ""
-                print(f"{indent}- [Pos {b['position']}] {b['block_type'].upper()}{parent_info}: {b['content'][:60]}...")
-
-            print(f"\n✅ EXTRACTED TASKS ({len(tasks)} total):")
-            for t in tasks:
-                status = "[x]" if t['is_done'] else "[ ]"
-                due = f" (Due: {t['due_date']})" if t['due_date'] else ""
-                print(f"  {status} {t['title']}{due}")
-
-            print(f"{'='*50}\n")
-            # --- MOCK DB OUTPUT END ---
+            print(f"Processed {event.event_type}: {event.path} (ID: {note_id})")
 
         except Exception as e:
             print(f"--> [ERROR] Parser worker failed: {e}")
