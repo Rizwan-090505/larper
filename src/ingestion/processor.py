@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 from src.core.events import FileEvent, ParseEvent
 from src.core.queue import parser_queue
+from src.ingestion.db import delete_note
 
 async def process_event(event: FileEvent) -> None:
     """
@@ -18,12 +19,9 @@ async def process_event(event: FileEvent) -> None:
         print(f"--> [WARNING] Unknown event type: {event.event_type}")
 
 async def _handle_deletion(path: Path) -> None:
-    """Handles 'deleted' file events (Mocked DB)."""
-    print(f"\n{'='*50}")
-    print(f"🛠️  MOCK DB ACTION: DELETE NOTE")
-    print(f"File Path: {path}")
-    print(f"Action: Would set deleted_at = UTC now and cascade delete blocks/tasks.")
-    print(f"{'='*50}\n")
+    """Handles 'deleted' file events."""
+    await delete_note(path)
+    print(f"Note deleted: {path}")
 
 async def _handle_upsert(path: Path, event_type: str) -> None:
     """Handles 'created' and 'modified' file events (Mocked DB)."""

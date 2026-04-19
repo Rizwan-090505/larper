@@ -2,6 +2,7 @@ import aiosqlite
 from contextlib import asynccontextmanager
 import os
 from pathlib import Path
+import datetime
 
 # Import settings
 from config import settings
@@ -67,13 +68,14 @@ async def init_db() -> None:
                 raw_text TEXT NOT NULL,
                 title TEXT NOT NULL,
                 is_done INTEGER DEFAULT 0,
+                is_deleted INTEGER DEFAULT 0,
                 due_date TEXT NULLABLE,
-                todoist_id TEXT NULLABLE UNIQUE,
+                todolist_id TEXT NULLABLE UNIQUE,
                 gcal_event_id TEXT NULLABLE,
                 sync_status TEXT DEFAULT 'pending',
                 last_synced_at DATETIME NULLABLE,
                 FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE,
-                FOREIGN KEY (block_id) REFERENCES blocks(id) ON DELETE CASCADE
+                FOREIGN KEY (block_id) REFERENCES blocks(id) ON DELETE SET NULL
             )
         """)
         
@@ -92,6 +94,93 @@ async def init_db() -> None:
         
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_file_path ON notes(file_path);")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_note_id ON tasks(note_id);")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_todoist_id ON tasks(todoist_id);")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_todolist_id ON tasks(todolist_id);")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_sync_log_logged_at ON sync_log(logged_at);")
+        await conn.commit()
+
+#faisal's code for upsert and delete operations, plus block/task insertion logic        
+
+
+async def upsert_note(file_path: str, title: str, note_type: str, raw_content: str, event_type: str) -> int:
+    now = datetime.datetime.utcnow().isoformat()
+    note_id = -1
+    async with get_connection() as conn:
+        if event_type == 'created':
+            cursor = await conn.execute("""
+                INSERT INTO notes (file_path, title, note_type, raw_content, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (str(file_path), title, note_type, raw_content, now, now))
+            note_id = cursor.lastrowid
+        elif event_type == 'modified':
+            await conn.execute("""
+                UPDATE notes SET title=?, raw_content=?, updated_at=? WHERE file_path=?
+            """, (title, raw_content, now, str(file_path)))
+            cursor = await conn.execute("SELECT id FROM notes WHERE file_path=?", (str(file_path),))
+            row = await cursor.fetchone()
+            if row:
+                note_id = row['id']
+        await conn.commit()
+        return note_id
+
+
+async def insert_blocks(note_id: int, blocks: list):
+    async with get_connection() as conn:
+        # Delete existing blocks for the note
+        await conn.execute("DELETE FROM blocks WHERE note_id=?", (note_id,))
+        for block in blocks:
+            await conn.execute("""
+                INSERT INTO blocks (note_id, block_type, content, level, position, parent_block)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (note_id, block['block_type'], block['content'], block.get('level'), block['position'], block.get('parent_block')))
+        await conn.commit()
+
+
+async def insert_tasks(note_id: int, tasks: list):
+    async with get_connection() as conn:
+        # Fetch existing tasks to match them up
+        cursor = await conn.execute("SELECT * FROM tasks WHERE note_id=? AND is_deleted=0", (note_id,))
+        existing_tasks = await cursor.fetchall()
+        existing_map = {row['title']: row for row in existing_tasks}
+        
+        new_titles = set()
+        
+        for task in tasks:
+            title = task['title']
+            new_titles.add(title)
+            
+            if title in existing_map:
+                # Update existing task
+                old_row = existing_map[title]
+                needs_sync = False
+                if old_row['is_done'] != task['is_done'] or old_row['due_date'] != task['due_date'] or old_row['raw_text'] != task['raw_text']:
+                    needs_sync = True
+                
+                sync_status = 'pending' if needs_sync else old_row['sync_status']
+                
+                await conn.execute("""
+                    UPDATE tasks 
+                    SET block_id=?, raw_text=?, is_done=?, due_date=?, sync_status=?
+                    WHERE id=?
+                """, (task['block_id'], task['raw_text'], task['is_done'], task['due_date'], sync_status, old_row['id']))
+            else:
+                # Insert new task
+                await conn.execute("""
+                    INSERT INTO tasks (note_id, block_id, raw_text, title, is_done, due_date, sync_status)
+                    VALUES (?, ?, ?, ?, ?, ?, 'pending')
+                """, (note_id, task['block_id'], task['raw_text'], title, task['is_done'], task['due_date']))
+        
+        # Mark tasks not in new list as deleted
+        for title, row in existing_map.items():
+            if title not in new_titles:
+                await conn.execute("""
+                    UPDATE tasks SET is_deleted=1, sync_status='pending' WHERE id=?
+                """, (row['id'],))
+                
+        await conn.commit()
+
+
+async def delete_note(file_path: str):
+    now = datetime.datetime.utcnow().isoformat()
+    async with get_connection() as conn:
+        await conn.execute("UPDATE notes SET deleted_at=? WHERE file_path=?", (now, str(file_path)))
         await conn.commit()
