@@ -5,6 +5,8 @@ from config import settings
 from src.ingestion.db import init_db
 from src.core.watchdog import start_watchdog
 from src.ingestion.worker import ingestion_worker
+#faisal
+from src.ingestion.sync_worker import sync_worker
 
 
 async def main():
@@ -24,10 +26,12 @@ async def main():
     
     from src.ingestion.parser import parser_worker
     parser_task = asyncio.create_task(parser_worker())
+    #faisal
+    sync_task = asyncio.create_task(sync_worker())
 
     try:
         # Run both tasks concurrently — both run forever until interrupted
-        await asyncio.gather(watchdog_task, worker_task, parser_task)
+        await asyncio.gather(watchdog_task, worker_task, parser_task, sync_task)
     except asyncio.CancelledError:
         pass
     # NOTE: No observer.stop()/join() here — start_watchdog() handles its

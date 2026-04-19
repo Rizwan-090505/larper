@@ -12,4 +12,5 @@ dependencies = [
     "pydantic>=2.13.0",
     "pydantic-settings>=2.13.1",
     "watchdog>=6.0.0",
+    "httpx>=0.25.0",
 ]
