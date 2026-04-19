@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -6,9 +6,8 @@ class Settings(BaseSettings):
     ACTIVE_FOLDER: str
     MODEL: str
     DB_PATH: str
-    class Config:
-        env_file = ".env"
-        #env_file_encoding = "utf-8"
+    
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
 settings = Settings()

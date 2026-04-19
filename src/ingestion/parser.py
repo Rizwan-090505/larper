@@ -116,6 +116,8 @@ def parse_markdown(path: Path, raw_content: str) -> Tuple[str, List[Dict[str, An
         traceback.print_exc()
         return path.stem, [], []
 
+from src.ingestion.sync_worker import sync_trigger
+
 async def parser_worker() -> None:
     """Consumes ParseEvents from parser_queue and processes them."""
     while True:
@@ -131,6 +133,9 @@ async def parser_worker() -> None:
             
             # Insert tasks
             await insert_tasks(note_id, tasks)
+            
+            # Trigger immediate sync
+            sync_trigger.set()
 
             print(f"Processed {event.event_type}: {event.path} (ID: {note_id})")
 

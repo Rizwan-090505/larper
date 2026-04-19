@@ -4,6 +4,8 @@ from src.ingestion.db import get_connection
 from src.ingestion.sync import todolist_client
 
 
+sync_trigger = asyncio.Event()
+
 async def sync_worker() -> None:
     """Syncs pending tasks to ToDoList."""
     while True:
@@ -14,6 +16,16 @@ async def sync_worker() -> None:
 
             for task in pending_tasks:
                 try:
+                    if task['is_deleted'] == 1:
+                        if task['todolist_id']:
+                            await todolist_client.delete_task(task['todolist_id'])
+                        
+                        async with get_connection() as conn:
+                            await conn.execute("DELETE FROM tasks WHERE id=?", (task['id'],))
+                            await conn.commit()
+                        print(f"Deleted task {task['id']} from ToDoList and local DB")
+                        continue
+
                     if not task['todolist_id']:
                         # Create new task on ToDoList
                         todolist_task = await todolist_client.create_task(
@@ -46,4 +58,8 @@ async def sync_worker() -> None:
         except Exception as e:
             print(f"--> [ERROR] Sync worker error: {e}")
 
-        await asyncio.sleep(60)  # Check every minute
+        try:
+            await asyncio.wait_for(sync_trigger.wait(), timeout=60.0)
+            sync_trigger.clear()
+        except asyncio.TimeoutError:
+            pass
