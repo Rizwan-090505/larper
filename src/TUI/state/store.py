@@ -1,8 +1,22 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
+import sys
+import os
 import uuid
+
+# Load ACTIVE_FOLDER from .env manually
+_root = Path(__file__).resolve().parents[3]
+_env_file = _root / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text().splitlines():
+        if "=" in _line and not _line.startswith("#"):
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip())
+
+ACTIVE_FOLDER = Path(os.environ.get("ACTIVE_FOLDER", str(Path.home() / "larper_notes")))
 
 
 @dataclass
@@ -101,6 +115,23 @@ class Store:
             self._notes.append(filename)
         if filename not in self._files:
             self._files[filename] = []
+
+    # ─── Disk Save ────────────────────────────────────────────────────────────
+
+    def _ensure_dir(self, subdir: str) -> Path:
+        target = ACTIVE_FOLDER / subdir
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def save_note_to_disk(self, content: str, subdir: str, filename: str) -> Path:
+        target_dir = self._ensure_dir(subdir)
+        filepath = target_dir / filename
+        filepath.write_text(content, encoding="utf-8")
+        self.add_note_file(str(Path(subdir) / filename))
+        return filepath
+
+    def get_active_folder(self) -> Path:
+        return ACTIVE_FOLDER
 
 
 store = Store()

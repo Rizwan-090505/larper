@@ -22,25 +22,4 @@ share/python-wheels/
 # Virtual environments
 .env
 .venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Database
-*.sqlite3
-*.db
-notes.db
-
-# macOS
-.DS_Store
-
-# IDEs
-.vscode/
-.idea/
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
+.env

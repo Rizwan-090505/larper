@@ -2,7 +2,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import tempfile
-import os
+from datetime import datetime
 from pathlib import Path
 from textual.widget import Widget
 from textual.app import ComposeResult
@@ -47,6 +47,12 @@ class VimPanel(Widget):
             super().__init__()
             self.filename = filename
 
+    class NoteSaved(Message):
+        def __init__(self, filepath: Path, subdir: str):
+            super().__init__()
+            self.filepath = filepath
+            self.subdir = subdir
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._content_lines: list[str] = []
@@ -74,16 +80,63 @@ class VimPanel(Widget):
             )
             content_widget.update(placeholder)
             return
-
         lines = []
         for i, line in enumerate(self._content_lines, 1):
             lines.append(f"[dim]{i:>3}[/dim]  {line}")
         content_widget.update("\n".join(lines))
 
     def open_in_real_vim(self, filename: str):
-        """Open file in real Vim via subprocess (suspends TUI)."""
         filepath = Path(self._tmpdir) / filename
         if not filepath.exists():
             filepath.write_text(f"# {filename}\n")
-        # This suspends the TUI and opens vim in the terminal
         subprocess.run(["vim", str(filepath)])
+
+    def _timestamp_filename(self, subdir: str) -> str:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        prefix = "page" if subdir == "pages" else "journal"
+        return f"{prefix}_{ts}.md"
+
+    async def open_vim_and_save(self, subdir: str = "pages"):
+        from state.store import store
+
+        filename = self._timestamp_filename(subdir)
+        tmp_path = Path(self._tmpdir) / filename
+        template = (
+            f"# {filename}\n"
+            f"# subdir: {subdir}\n"
+            f"# date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+        )
+        tmp_path.write_text(template, encoding="utf-8")
+
+        try:
+            title = self.query_one("#vim-title", Static)
+            title.update(f"  ✎  Launching vim → {subdir}/{filename} …")
+        except Exception:
+            pass
+
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: subprocess.run(
+                ["vim", str(tmp_path)],
+                stdin=open("/dev/tty"),
+                stdout=open("/dev/tty", "w")
+            )
+        )
+
+        content = tmp_path.read_text(encoding="utf-8")
+
+        if content.strip():
+            saved_path = store.save_note_to_disk(content, subdir, filename)
+            self._content_lines = [line for line in content.splitlines() if line]
+            self._render_content()
+            try:
+                title = self.query_one("#vim-title", Static)
+                title.update(f"  ✎  {subdir}/{filename}  [saved ✓]")
+            except Exception:
+                pass
+            self.post_message(self.NoteSaved(filepath=saved_path, subdir=subdir))
+        else:
+            try:
+                title = self.query_one("#vim-title", Static)
+                title.update("  ✎  VIM EDITOR  [no changes]")
+            except Exception:
+                pass
