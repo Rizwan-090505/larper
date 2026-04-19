@@ -3,14 +3,7 @@ name = "larper"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
-    "aiosqlite>=0.22.1",
-    "markdown-it-py>=4.0.0",
-    "mdit-py-plugins>=0.5.0",
-    "mypy>=1.20.1",
-    "pydantic>=2.13.0",
-    "pydantic-settings>=2.13.1",
-    "watchdog>=6.0.0",
-    "httpx>=0.25.0",
+    "textual>=8.2.3",
 ]
