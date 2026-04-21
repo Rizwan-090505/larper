@@ -1,5 +1,4 @@
 from __future__ import annotations
-import asyncio
 import subprocess
 import tempfile
 from datetime import datetime
@@ -12,6 +11,8 @@ from textual.message import Message
 
 
 class VimPanel(Widget):
+    """Panel that displays vim content and manages vim subprocess."""
+    
     DEFAULT_CSS = """
     VimPanel {
         height: 1fr;
@@ -31,23 +32,12 @@ class VimPanel(Widget):
         padding: 1;
         color: $text;
     }
-    VimPanel .vim-line {
-        color: $text-muted;
-    }
-    VimPanel .vim-line-number {
-        color: $accent 70%;
-    }
     """
 
     current_file: reactive[str] = reactive("")
-    _lines: reactive[list] = reactive([])
-
-    class OpenedFile(Message):
-        def __init__(self, filename: str):
-            super().__init__()
-            self.filename = filename
 
     class NoteSaved(Message):
+        """Posted when a note is saved from vim."""
         def __init__(self, filepath: Path, subdir: str):
             super().__init__()
             self.filepath = filepath
@@ -56,34 +46,49 @@ class VimPanel(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._content_lines: list[str] = []
+<<<<<<< HEAD
+=======
+        self._tmpdir = Path(tempfile.mkdtemp())
+>>>>>>> 7c2c78e (inserting worked)
 
     def compose(self) -> ComposeResult:
         yield Static("  VIM EDITOR", id="vim-title", classes="vim-title")
         yield Static(id="vim-content")
 
     def load_file(self, filename: str):
+        """Load a file into the vim panel display."""
         self.current_file = filename
-        title = self.query_one("#vim-title", Static)
-        title.update(f"  ✎  {filename}  [vim]")
+        self._update_title(f"  ✎  {filename}  [vim]")
         self._render_content()
 
     def append_line(self, text: str):
+        """Append a line to the content display."""
         self._content_lines.append(text)
         self._render_content()
 
+    def _update_title(self, text: str):
+        """Update the vim panel title."""
+        try:
+            title = self.query_one("#vim-title", Static)
+            title.update(text)
+        except Exception:
+            pass
+
     def _render_content(self):
+        """Render content lines with line numbers."""
         content_widget = self.query_one("#vim-content", Static)
+        
         if not self._content_lines:
-            placeholder = "\n".join(
-                f"[dim]{i+1:>3}[/dim]  ~" for i in range(20)
-            )
+            # Show empty vim-style placeholder
+            placeholder = "\n".join(f"[dim]{i+1:>3}[/dim]  ~" for i in range(20))
             content_widget.update(placeholder)
             return
-        lines = []
-        for i, line in enumerate(self._content_lines, 1):
-            lines.append(f"[dim]{i:>3}[/dim]  {line}")
+        
+        # Render actual content with line numbers
+        lines = [f"[dim]{i:>3}[/dim]  {line}" for i, line in enumerate(self._content_lines, 1)]
         content_widget.update("\n".join(lines))
 
+<<<<<<< HEAD
     def open_in_real_vim(self, filename: str):
         from state.store import store
         # This function seems unused, but let's point it to the Active Folder just in case
@@ -95,9 +100,15 @@ class VimPanel(Widget):
 
     def _timestamp_filename(self, subdir: str) -> str:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+=======
+    def _generate_filename(self, subdir: str) -> str:
+        """Generate timestamped filename."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+>>>>>>> 7c2c78e (inserting worked)
         prefix = "page" if subdir == "pages" else "journal"
-        return f"{prefix}_{ts}.md"
+        return f"{prefix}_{timestamp}.md"
 
+<<<<<<< HEAD
     async def open_vim_and_save(self, subdir: str = "pages", filename: str = None):
         from state.store import store
 
@@ -170,3 +181,63 @@ class VimPanel(Widget):
             title.update(f"  ✎  {Path(filepath).name}  [edited ✓]")
         except Exception:
             pass
+=======
+    def _create_template(self, filename: str, subdir: str) -> str:
+        """Create initial file template."""
+        return (
+            f"# {filename}\n"
+            f"# subdir: {subdir}\n"
+            f"# date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+        )
+
+    def open_vim_editor(self, subdir: str = "pages") -> tuple[bool, Path | None]:
+        """
+        Open vim in raw terminal mode (suspends TUI).
+        
+        Returns:
+            (success: bool, filepath: Path | None)
+        """
+        from state.store import store
+
+        filename = self._generate_filename(subdir)
+        tmp_path = self._tmpdir / filename
+        
+        # Create initial template
+        template = self._create_template(filename, subdir)
+        tmp_path.write_text(template, encoding="utf-8")
+        
+        # Update UI before launching
+        self._update_title(f"  ✎  Opening vim → {subdir}/{filename} …")
+
+        # Launch vim - this will be called when TUI is suspended
+        result = subprocess.run(
+            ["vim", str(tmp_path)],
+            stdin=subprocess.DEVNULL,  # Don't interfere with terminal
+        )
+
+        # Check if vim exited successfully
+        if result.returncode != 0:
+            self._update_title("  ✎  VIM EDITOR  [vim failed]")
+            return False, None
+
+        # Read the edited content
+        content = tmp_path.read_text(encoding="utf-8").strip()
+        
+        if not content or content == template.strip():
+            # No changes made
+            self._update_title("  ✎  VIM EDITOR  [no changes]")
+            return False, None
+
+        # Save to disk
+        saved_path = store.save_note_to_disk(content, subdir, filename)
+        
+        # Update display
+        self._content_lines = [line for line in content.splitlines() if line]
+        self._render_content()
+        self._update_title(f"  ✎  {subdir}/{filename}  [saved ✓]")
+        
+        # Notify app
+        self.post_message(self.NoteSaved(filepath=saved_path, subdir=subdir))
+        
+        return True, saved_path
+>>>>>>> 7c2c78e (inserting worked)
