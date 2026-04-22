@@ -19,6 +19,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 *.db
+*.db-shm
+*.db-wal
 # Virtual environments
 .env
 .venv

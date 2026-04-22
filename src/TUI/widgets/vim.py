@@ -56,7 +56,6 @@ class VimPanel(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._content_lines: list[str] = []
-        self._tmpdir = tempfile.mkdtemp()
 
     def compose(self) -> ComposeResult:
         yield Static("  VIM EDITOR", id="vim-title", classes="vim-title")
@@ -86,8 +85,11 @@ class VimPanel(Widget):
         content_widget.update("\n".join(lines))
 
     def open_in_real_vim(self, filename: str):
-        filepath = Path(self._tmpdir) / filename
+        from state.store import store
+        # This function seems unused, but let's point it to the Active Folder just in case
+        filepath = store.get_active_folder() / filename
         if not filepath.exists():
+            filepath.parent.mkdir(parents=True, exist_ok=True)
             filepath.write_text(f"# {filename}\n")
         subprocess.run(["vim", str(filepath)])
 
@@ -102,13 +104,17 @@ class VimPanel(Widget):
         if not filename:
             filename = self._timestamp_filename(subdir)
         
-        tmp_path = Path(self._tmpdir) / filename
-        template = (
-            f"# {filename}\n"
-            f"# subdir: {subdir}\n"
-            f"# date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
-        )
-        tmp_path.write_text(template, encoding="utf-8")
+        target_dir = store.get_active_folder() / subdir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        filepath = target_dir / filename
+
+        if not filepath.exists():
+            template = (
+                f"# {filename}\n"
+                f"# subdir: {subdir}\n"
+                f"# date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+            )
+            filepath.write_text(template, encoding="utf-8")
 
         try:
             title = self.query_one("#vim-title", Static)
@@ -117,12 +123,17 @@ class VimPanel(Widget):
             pass
 
         # Suspend the app and let vim take over the terminal
-        await self._suspend_app_for_vim(str(tmp_path))
+        await self._suspend_app_for_vim(str(filepath))
 
-        content = tmp_path.read_text(encoding="utf-8")
+        # Because we're editing the real file, watchdog handles DB ingestion,
+        # but we still want to update our local TUI state and store tracking
+        content = ""
+        if filepath.exists():
+            content = filepath.read_text(encoding="utf-8")
 
         if content.strip():
-            saved_path = store.save_note_to_disk(content, subdir, filename)
+            # Add to store file tracking array manually since we skipped save_note_to_disk logic
+            store.add_note_file(str(Path(subdir) / filename))
             self._content_lines = [line for line in content.splitlines() if line]
             self._render_content()
             try:
@@ -130,11 +141,11 @@ class VimPanel(Widget):
                 title.update(f"  ✎  {subdir}/{filename}  [saved ✓]")
             except Exception:
                 pass
-            self.post_message(self.NoteSaved(filepath=saved_path, subdir=subdir))
+            self.post_message(self.NoteSaved(filepath=filepath, subdir=subdir))
         else:
             try:
                 title = self.query_one("#vim-title", Static)
-                title.update("  ✎  VIM EDITOR  [no changes]")
+                title.update("  ✎  VIM EDITOR  [no text]")
             except Exception:
                 pass
 
