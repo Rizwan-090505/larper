@@ -84,37 +84,41 @@ class NotesPanel(Widget):
     def on_mount(self):
         self.refresh_notes()
 
-    async def _load_notes_from_db(self):
-        """Load all notes from the database."""
+    async def _load_notes_from_directory(self):
+        """Load all notes from the directory based on most recent edits."""
         try:
-            from src.ingestion.db import get_connection
-            notes = []
-            async with get_connection() as conn:
-                cursor = await conn.execute(
-                    "SELECT file_path, title FROM notes WHERE deleted_at IS NULL ORDER BY updated_at DESC"
-                )
-                rows = await cursor.fetchall()
-                for row in rows:
-                    filepath = row['file_path']
-                    title = row['title']
-                    # Extract just the filename for display
-                    import os
-                    filename = os.path.basename(filepath)
-                    notes.append((filename, filepath))
-            return notes
+            from state.store import store
+            
+            active_folder = store.get_active_folder()
+            file_stats = []
+            
+            for subdir in ["pages", "journals"]:
+                dir_path = active_folder / subdir
+                if dir_path.exists() and dir_path.is_dir():
+                    for filepath in dir_path.glob("*.md"):
+                        try:
+                            mtime = filepath.stat().st_mtime
+                            file_stats.append((mtime, filepath.name, str(filepath)))
+                        except Exception:
+                            pass
+                            
+            # Sort by modification time descending (most recent first)
+            file_stats.sort(key=lambda x: x[0], reverse=True)
+            
+            return [(fname, fpath) for _, fname, fpath in file_stats]
         except Exception as e:
-            print(f"Error loading notes from db: {e}")
+            print(f"Error loading notes from directory: {e}")
             return []
 
     def refresh_notes(self):
-        """Refresh notes list from database."""
+        """Refresh notes list from directory."""
         async def load_and_display():
-            db_notes = await self._load_notes_from_db()
+            dir_notes = await self._load_notes_from_directory()
             lv = self.query_one("#notes-list", ListView)
             lv.clear()
             
-            # Add database notes
-            for filename, filepath in db_notes:
+            # Add directory notes
+            for filename, filepath in dir_notes:
                 lv.append(NoteItem(filename, filepath))
             
             # Also add in-memory notes from store
