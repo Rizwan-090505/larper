@@ -14,6 +14,7 @@ from widgets.notes import NotesPanel
 from widgets.vim import VimPanel
 from widgets.tabs import TabBar
 from widgets.status_bar import StatusBar
+from widgets.input_dialog import FilenameInputDialog
 from state.store import store
 
 
@@ -170,9 +171,13 @@ class DevWorkspaceApp(App):
     # ─── File Open ────────────────────────────────────────────────────────────
 
     def on_notes_panel_file_selected(self, event: NotesPanel.FileSelected):
-        self._open_file(event.filename)
+        self._open_file(event.filename, event.filepath)
 
-    def _open_file(self, filename: str):
+    def on_notes_panel_edit_requested(self, event: NotesPanel.EditRequested):
+        """Handle edit in vim request from notes panel."""
+        self._edit_file_in_vim(event.filepath)
+
+    def _open_file(self, filename: str, filepath: str = None):
         store.set_current_file(filename)
         if not self._vim_mode:
             self._switch_to_vim_mode()
@@ -318,13 +323,46 @@ class DevWorkspaceApp(App):
         self._open_vim_note("journals")
 
     def _open_vim_note(self, subdir: str):
+        """Show filename input dialog and then open vim."""
+        subdir_label = "page" if subdir == "pages" else "journal"
+        dialog = FilenameInputDialog(
+            title=f"New {subdir_label} filename",
+            default=""
+        )
+        self._pending_subdir = subdir  # Store for later use
+        self.push_screen(dialog)
+        
+    def on_filename_input_dialog_submitted(self, event: FilenameInputDialog.Submitted):
+        """Handle filename input from dialog."""
+        subdir = getattr(self, '_pending_subdir', 'pages')
+        
+        filename = event.filename
+        if not filename.endswith(".md"):
+            filename += ".md"
+        
         async def _launch():
             if not self._vim_mode:
                 self._switch_to_vim_mode()
                 await asyncio.sleep(0.35)
             try:
                 vim = self.query_one("#vim-panel", VimPanel)
-                await vim.open_vim_and_save(subdir)
+                await vim.open_vim_and_save(subdir, filename)
+            except Exception as exc:
+                self._log_agent(f"[red]✗ Could not open vim:[/red] {exc}")
+        
+        asyncio.get_event_loop().create_task(_launch())
+
+    def on_filename_input_dialog_cancelled(self, event: FilenameInputDialog.Cancelled):
+        """Handle dialog cancellation."""
+        pass
+
+    def _edit_file_in_vim(self, filepath: str):
+        """Open an existing file in vim for editing."""
+        async def _launch():
+            try:
+                vim = self.query_one("#vim-panel", VimPanel)
+                await vim.open_vim_edit_file(filepath)
+                self._log_agent(f"[cyan]📝 Editing:[/cyan] [bold]{filepath}[/bold]")
             except Exception as exc:
                 self._log_agent(f"[red]✗ Could not open vim:[/red] {exc}")
         asyncio.get_event_loop().create_task(_launch())

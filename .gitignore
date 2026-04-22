@@ -23,3 +23,9 @@ share/python-wheels/
 .env
 .venv
 .env
+
+pages/
+pages/**
+jounrals/
+journals/**
+

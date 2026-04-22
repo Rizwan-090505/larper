@@ -96,10 +96,12 @@ class VimPanel(Widget):
         prefix = "page" if subdir == "pages" else "journal"
         return f"{prefix}_{ts}.md"
 
-    async def open_vim_and_save(self, subdir: str = "pages"):
+    async def open_vim_and_save(self, subdir: str = "pages", filename: str = None):
         from state.store import store
 
-        filename = self._timestamp_filename(subdir)
+        if not filename:
+            filename = self._timestamp_filename(subdir)
+        
         tmp_path = Path(self._tmpdir) / filename
         template = (
             f"# {filename}\n"
@@ -110,17 +112,12 @@ class VimPanel(Widget):
 
         try:
             title = self.query_one("#vim-title", Static)
-            title.update(f"  ✎  Launching vim → {subdir}/{filename} …")
+            title.update(f"  ✎  Opening vim → {subdir}/{filename} …")
         except Exception:
             pass
 
-        await asyncio.get_event_loop().run_in_executor(
-            None, lambda: subprocess.run(
-                ["vim", str(tmp_path)],
-                stdin=open("/dev/tty"),
-                stdout=open("/dev/tty", "w")
-            )
-        )
+        # Suspend the app and let vim take over the terminal
+        await self._suspend_app_for_vim(str(tmp_path))
 
         content = tmp_path.read_text(encoding="utf-8")
 
@@ -140,3 +137,25 @@ class VimPanel(Widget):
                 title.update("  ✎  VIM EDITOR  [no changes]")
             except Exception:
                 pass
+
+    async def _suspend_app_for_vim(self, filepath: str):
+        """Suspend the textual app, let vim take over terminal, then resume."""
+        with self.app.suspend():
+            subprocess.run(["vim", filepath])
+
+    async def open_vim_edit_file(self, filepath: str):
+        """Open an existing file in vim for editing, taking over terminal."""
+        try:
+            title = self.query_one("#vim-title", Static)
+            title.update(f"  ✎  Opening vim for {Path(filepath).name} …")
+        except Exception:
+            pass
+
+        # Suspend app and let vim take over
+        await self._suspend_app_for_vim(filepath)
+
+        try:
+            title = self.query_one("#vim-title", Static)
+            title.update(f"  ✎  {Path(filepath).name}  [edited ✓]")
+        except Exception:
+            pass

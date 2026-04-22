@@ -92,10 +92,27 @@ async def init_db() -> None:
             )
         """)
         
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS block_references (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_block_id INTEGER,
+                target_note_id INTEGER,
+                target_block_id INTEGER NULLABLE,
+                reference_type TEXT NOT NULL DEFAULT 'link',
+                target_title TEXT NULLABLE,
+                created_at DATETIME NOT NULL,
+                FOREIGN KEY (source_block_id) REFERENCES blocks(id) ON DELETE CASCADE,
+                FOREIGN KEY (target_note_id) REFERENCES notes(id) ON DELETE CASCADE,
+                FOREIGN KEY (target_block_id) REFERENCES blocks(id) ON DELETE SET NULL
+            )
+        """)
+        
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_file_path ON notes(file_path);")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_note_id ON tasks(note_id);")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_todolist_id ON tasks(todolist_id);")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_sync_log_logged_at ON sync_log(logged_at);")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_block_references_source ON block_references(source_block_id);")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_block_references_target ON block_references(target_note_id);")
         await conn.commit()
 
 #faisal's code for upsert and delete operations, plus block/task insertion logic        
@@ -183,4 +200,26 @@ async def delete_note(file_path: str):
     now = datetime.datetime.utcnow().isoformat()
     async with get_connection() as conn:
         await conn.execute("UPDATE notes SET deleted_at=? WHERE file_path=?", (now, str(file_path)))
+        await conn.commit()
+
+
+async def insert_references(note_id: int, block_references: list):
+    """Insert block references/links into the block_references table."""
+    now = datetime.datetime.utcnow().isoformat()
+    async with get_connection() as conn:
+        # Delete existing references for this note's blocks
+        await conn.execute("""
+            DELETE FROM block_references 
+            WHERE source_block_id IN (
+                SELECT id FROM blocks WHERE note_id=?
+            )
+        """, (note_id,))
+        
+        for ref in block_references:
+            await conn.execute("""
+                INSERT INTO block_references (source_block_id, target_note_id, target_block_id, reference_type, target_title, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (ref['source_block_id'], ref['target_note_id'], ref.get('target_block_id'), 
+                  ref.get('reference_type', 'link'), ref.get('target_title'), now))
+        
         await conn.commit()
