@@ -4,12 +4,22 @@ from src.ingestion.db.connection import get_connection
 
 
 async def insert_blocks(note_id: int, blocks: list) -> list[int]:
-    """Insert/replace blocks for a note. Returns list of inserted block IDs."""
+    """Insert/replace blocks for a note. Returns list of inserted block IDs.
+
+    blocks[i]['parent_block'] is a parser-local index (0, 1, 2…).
+    We remap it to the real SQLite rowid as we insert each block, so the
+    FOREIGN KEY(parent_block) REFERENCES blocks(id) constraint is satisfied.
+    """
     async with get_connection() as conn:
         await conn.execute("DELETE FROM blocks WHERE note_id=?", (note_id,))
 
         block_ids = []
-        for block in blocks:
+        local_to_db: dict[int, int] = {}  # local index → real rowid
+
+        for local_idx, block in enumerate(blocks):
+            local_parent = block.get('parent_block')
+            db_parent = local_to_db.get(local_parent) if local_parent is not None else None
+
             cursor = await conn.execute("""
                 INSERT INTO blocks (note_id, block_type, content, level, position, parent_block)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -19,10 +29,11 @@ async def insert_blocks(note_id: int, blocks: list) -> list[int]:
                 block['content'],
                 block.get('level'),
                 block['position'],
-                block.get('parent_block'),
+                db_parent,
             ))
-            block_id = cursor.lastrowid
-            block_ids.append(block_id)
+            db_id = cursor.lastrowid
+            block_ids.append(db_id)
+            local_to_db[local_idx] = db_id
 
         await conn.commit()
         print(f"--> [DB] Inserted {len(blocks)} blocks for note ID {note_id}")

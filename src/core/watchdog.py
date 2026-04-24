@@ -1,12 +1,21 @@
+
 import asyncio
 from pathlib import Path
-
+import logging
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileSystemEvent
-
 from src.core.queue import event_queue
 from src.core.events import FileEvent
 from config import settings
+
+# Setup logging
+logging.basicConfig(
+    filename="watchdog.log",
+    filemode="a",
+    format="%(asctime)s %(levelname)s %(message)s",
+    level=logging.INFO
+)
+
 
 
 class LARPEREventHandler(FileSystemEventHandler):
@@ -24,16 +33,19 @@ class LARPEREventHandler(FileSystemEventHandler):
             for root in self.watch_roots
         )
 
+
     def _enqueue(self, path: Path, event_type: str) -> None:
         if not self._should_track(path):
             return
 
         event = FileEvent(path=path, event_type=event_type)
+        logging.info(f"Watchdog event: {event_type} - {path}")
 
-        asyncio.run_coroutine_threadsafe(
+        fut = asyncio.run_coroutine_threadsafe(
             event_queue.put(event),
             self.loop,
         )
+        fut.add_done_callback(lambda f: logging.info(f"Queued event: {event_type} - {path}"))
 
     def on_created(self, event: FileSystemEvent) -> None:
         if not event.is_directory:

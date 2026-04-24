@@ -28,7 +28,7 @@ share/python-wheels/
 
 pages/
 pages/**
-
+watchdog.log
 db.sqlite3
 jounrals/
 journals/**

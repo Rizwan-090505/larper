@@ -4,6 +4,13 @@ from src.ingestion.db.connection import get_connection
 async def insert_tasks(note_id: int, tasks: list) -> None:
     """Insert/update tasks for a note, tracking sync status for changes."""
     async with get_connection() as conn:
+        # Null out block_id on ALL existing tasks for this note first —
+        # blocks were just re-inserted with new rowids, so any surviving
+        # task row still pointing at the old block rowids would violate the FK.
+        await conn.execute(
+            "UPDATE tasks SET block_id=NULL WHERE note_id=?", (note_id,)
+        )
+
         cursor = await conn.execute(
             "SELECT * FROM tasks WHERE note_id=? AND is_deleted=0", (note_id,)
         )
