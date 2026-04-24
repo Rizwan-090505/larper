@@ -28,6 +28,8 @@ share/python-wheels/
 
 pages/
 pages/**
+
+db.sqlite3
 jounrals/
 journals/**
 

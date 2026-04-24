@@ -21,7 +21,8 @@ async def insert_blocks(note_id: int, blocks: list) -> list[int]:
                 block['position'],
                 block.get('parent_block'),
             ))
-            block_ids.append(cursor.lastrowid)
+            block_id = cursor.lastrowid
+            block_ids.append(block_id)
 
         await conn.commit()
         print(f"--> [DB] Inserted {len(blocks)} blocks for note ID {note_id}")

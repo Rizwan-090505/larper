@@ -1,7 +1,7 @@
 from typing import List, Dict, Any
 from src.core.queue import parser_queue
 from src.core.events import ParseEvent
-from src.ingestion.db import upsert_note, insert_blocks, insert_tasks, insert_references, get_connection
+from src.ingestion.db import upsert_note, insert_blocks, insert_tasks, insert_references, insert_block_tags, get_connection
 from src.ingestion.sync_worker import sync_trigger
 from src.ingestion.parser.core import parse_markdown
 from src.rag.vector_db import add_blocks_to_vector_db
@@ -51,11 +51,12 @@ async def parser_worker() -> None:
     while True:
         try:
             event: ParseEvent = await parser_queue.get()
-            title, blocks, tasks, references = parse_markdown(event.path, event.raw_content)
+            title, blocks, tasks, references, block_tags = parse_markdown(event.path, event.raw_content)
 
             note_id = await upsert_note(event.path, title, event.note_type,
                                         event.raw_content, event.event_type)
             block_ids = await insert_blocks(note_id, blocks)
+            await insert_block_tags(block_ids, block_tags)
             await insert_tasks(note_id, tasks)
 
             # Ensure vector DB is initialized

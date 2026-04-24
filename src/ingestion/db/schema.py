@@ -96,6 +96,18 @@ async def _create_block_references_table(conn: aiosqlite.Connection) -> None:
     """)
 
 
+async def _create_block_tags_table(conn: aiosqlite.Connection) -> None:
+    """Create block_tags table for hashtag searchability."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS block_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            block_id INTEGER,
+            tag TEXT NOT NULL,
+            FOREIGN KEY (block_id) REFERENCES blocks(id) ON DELETE CASCADE
+        )
+    """)
+
+
 async def _create_indices(conn: aiosqlite.Connection) -> None:
     """Create all indices for query performance."""
     indices = [
@@ -108,6 +120,8 @@ async def _create_indices(conn: aiosqlite.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_sync_log_logged_at ON sync_log(logged_at);",
         "CREATE INDEX IF NOT EXISTS idx_block_references_source ON block_references(source_block_id);",
         "CREATE INDEX IF NOT EXISTS idx_block_references_target ON block_references(target_note_id);",
+        "CREATE INDEX IF NOT EXISTS idx_block_tags_tag ON block_tags(tag);",
+        "CREATE INDEX IF NOT EXISTS idx_block_tags_block_id ON block_tags(block_id);",
     ]
     for sql in indices:
         await conn.execute(sql)
@@ -123,6 +137,7 @@ async def init_db() -> None:
         await _create_tasks_table(conn)
         await _create_sync_log_table(conn)
         await _create_block_references_table(conn)
+        await _create_block_tags_table(conn)
         await _create_indices(conn)
         await conn.commit()
         print("--> [DB] Database initialization complete!")

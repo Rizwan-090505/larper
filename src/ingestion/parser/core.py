@@ -5,13 +5,13 @@ from typing import List, Dict, Tuple, Any, Optional
 from markdown_it import MarkdownIt
 from mdit_py_plugins.front_matter import front_matter_plugin
 
-from src.ingestion.parser.patterns import TASK_PATTERN, LINK_PATTERN
+from src.ingestion.parser.patterns import TASK_PATTERN, LINK_PATTERN, TAG_PATTERN
 from src.ingestion.parser.extractors import _extract_heading_level, _detect_event, _extract_task_meta
 
 def parse_markdown(path: Path, raw_content: str
-                   ) -> Tuple[str, List[Dict], List[Dict], List[Dict]]:
+                   ) -> Tuple[str, List[Dict], List[Dict], List[Dict], List[Dict]]:
     """
-    Parse markdown into (title, blocks, tasks, references).
+    Parse markdown into (title, blocks, tasks, references, block_tags).
     Parent hierarchy logic:
     - Headings build a section stack (h1 > h2 > h3 …).
       A heading's parent is the last heading with a *smaller* level number.
@@ -26,6 +26,7 @@ def parse_markdown(path: Path, raw_content: str
         blocks: List[Dict[str, Any]] = []
         tasks: List[Dict[str, Any]] = []
         references: List[Dict[str, Any]] = []
+        block_tags: List[Dict[str, Any]] = []
 
         heading_stack: List[Tuple[int, int]] = []
         list_item_stack: List[int] = []
@@ -102,6 +103,7 @@ def parse_markdown(path: Path, raw_content: str
 
                 level = _extract_heading_level(current_heading_tag) if in_heading else list_depth
 
+                extracted_tags = TAG_PATTERN.findall(content)
                 blocks.append({
                     'id': block_id,
                     'block_type': block_type,
@@ -110,6 +112,12 @@ def parse_markdown(path: Path, raw_content: str
                     'position': position,
                     'parent_block': parent_block,
                 })
+
+                for tag in extracted_tags:
+                    block_tags.append({
+                        'block_id': block_id,
+                        'tag': tag
+                    })
 
                 if in_heading and current_heading_tag:
                     hlevel = _extract_heading_level(current_heading_tag)
@@ -145,9 +153,9 @@ def parse_markdown(path: Path, raw_content: str
 
             i += 1
 
-        return title, blocks, tasks, references
+        return title, blocks, tasks, references, block_tags
 
     except Exception as e:
         print(f"--> [ERROR] Markdown parsing failed for {path}: {e}")
         traceback.print_exc()
-        return path.stem, [], [], []
+        return path.stem, [], [], [], []

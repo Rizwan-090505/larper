@@ -1,5 +1,5 @@
 import pytest
-from src.ingestion.parser.patterns import TASK_PATTERN, DUE_DATE_PATTERN
+from src.ingestion.parser.patterns import TASK_PATTERN, DUE_DATE_PATTERN, TAG_PATTERN
 
 def test_task_pattern():
     # Valid done tasks
@@ -32,6 +32,11 @@ def test_due_date_pattern():
     assert DUE_DATE_PATTERN.search("Task due: 2026-04-22").group(1) == "2026-04-22"
     assert DUE_DATE_PATTERN.search("Task @due 2026/04/22").group(1) == "2026/04/22"
 
+def test_tag_pattern():
+    assert TAG_PATTERN.findall("Hello #world and #python-3") == ["world", "python-3"]
+    # Should not match hashtags in standard markdown links or wikilinks if they start right after [
+    assert TAG_PATTERN.findall("See [[#Reference]] or [#1](url)") == []
+
 from src.ingestion.parser.extractors import _extract_task_meta
 
 def test_extract_task_meta():
@@ -49,5 +54,6 @@ def test_extract_task_meta():
 if __name__ == "__main__":
     test_task_pattern()
     test_due_date_pattern()
+    test_tag_pattern()
     test_extract_task_meta()
     print("ALL TESTS PASSED")
