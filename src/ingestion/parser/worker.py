@@ -4,6 +4,7 @@ from src.core.events import ParseEvent
 from src.ingestion.db import upsert_note, insert_blocks, insert_tasks, insert_references, get_connection
 from src.ingestion.sync_worker import sync_trigger
 from src.ingestion.parser.core import parse_markdown
+from src.rag.vector_db import add_blocks_to_vector_db
 
 async def _resolve_references(references: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Resolve target_title to target_note_id and optionally target_block_id."""
@@ -44,6 +45,9 @@ async def _resolve_references(references: List[Dict[str, Any]]) -> List[Dict[str
 
 async def parser_worker() -> None:
     """Consumes ParseEvents from parser_queue and processes them."""
+    import logging
+    from src.rag.vector_db import _get_vector_db
+    logging.basicConfig(level=logging.INFO)
     while True:
         try:
             event: ParseEvent = await parser_queue.get()
@@ -51,8 +55,26 @@ async def parser_worker() -> None:
 
             note_id = await upsert_note(event.path, title, event.note_type,
                                         event.raw_content, event.event_type)
-            await insert_blocks(note_id, blocks)
+            block_ids = await insert_blocks(note_id, blocks)
             await insert_tasks(note_id, tasks)
+
+            # Ensure vector DB is initialized
+            try:
+                vector_db = _get_vector_db()
+                logging.info("Vector DB initialized.")
+            except Exception as db_init_exc:
+                logging.error(f"Failed to initialize vector DB: {db_init_exc}")
+                raise
+
+            # Add blocks to vector database and generate embeddings
+            if block_ids and blocks:
+                contents = [block['content'] for block in blocks]
+                try:
+                    await add_blocks_to_vector_db(block_ids, contents)
+                    logging.info(f"Embeddings generated and added for note {note_id} ({len(block_ids)} blocks)")
+                except Exception as emb_exc:
+                    logging.error(f"Failed to generate/add embeddings: {emb_exc}")
+                    raise
 
             if references:
                 resolved_refs = await _resolve_references(references)
@@ -60,9 +82,10 @@ async def parser_worker() -> None:
                     await insert_references(note_id, resolved_refs)
 
             sync_trigger.set()
-            print(f"Processed {event.event_type}: {event.path} (ID: {note_id})")
+            logging.info(f"Processed {event.event_type}: {event.path} (ID: {note_id})")
 
         except Exception as e:
-            print(f"--> [ERROR] Parser worker failed: {e}")
+            logging.error(f"--> [ERROR] Parser worker failed: {e}")
         finally:
             parser_queue.task_done()
+

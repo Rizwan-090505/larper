@@ -3,13 +3,14 @@ import datetime
 from src.ingestion.db.connection import get_connection
 
 
-async def insert_blocks(note_id: int, blocks: list) -> None:
-    """Insert/replace blocks for a note."""
+async def insert_blocks(note_id: int, blocks: list) -> list[int]:
+    """Insert/replace blocks for a note. Returns list of inserted block IDs."""
     async with get_connection() as conn:
         await conn.execute("DELETE FROM blocks WHERE note_id=?", (note_id,))
 
+        block_ids = []
         for block in blocks:
-            await conn.execute("""
+            cursor = await conn.execute("""
                 INSERT INTO blocks (note_id, block_type, content, level, position, parent_block)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (
@@ -20,9 +21,11 @@ async def insert_blocks(note_id: int, blocks: list) -> None:
                 block['position'],
                 block.get('parent_block'),
             ))
+            block_ids.append(cursor.lastrowid)
 
         await conn.commit()
         print(f"--> [DB] Inserted {len(blocks)} blocks for note ID {note_id}")
+        return block_ids
 
 
 async def insert_references(note_id: int, block_references: list) -> None:

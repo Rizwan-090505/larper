@@ -31,3 +31,10 @@ pages/**
 jounrals/
 journals/**
 
+.model_cache/
+.model_cache/**
+
+
+*.npy
+*.bin
+*.mapping
