@@ -3,6 +3,16 @@ import datetime
 from src.ingestion.db.connection import get_connection
 
 
+async def get_block_ids_for_note(note_id: int) -> list[int]:
+    """Return all existing block IDs for a note (used before deletion)."""
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT id FROM blocks WHERE note_id=?", (note_id,)
+        )
+        rows = await cursor.fetchall()
+        return [row["id"] for row in rows]
+
+
 async def insert_blocks(note_id: int, blocks: list) -> list[int]:
     """Insert/replace blocks for a note. Returns list of inserted block IDs.
 

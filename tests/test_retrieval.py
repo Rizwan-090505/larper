@@ -45,7 +45,7 @@ async def test_add_and_search_blocks():
 
 @pytest.mark.asyncio
 async def test_custom_query():
-    query = "What am I trying to do"
+    query = "There should be what"
     results = await search_similar_blocks(query, k=3)
 
     print("\nCustom Query Results:")

@@ -244,12 +244,19 @@ async def add_blocks_to_vector_db(
 
     target_db = db or _get_vector_db()
 
-    embeddings = [
-        target_db.get_embedding(_normalize_text(c))
-        for c in contents
-    ]
+    import asyncio
+    loop = asyncio.get_event_loop()
 
-    target_db.add_embeddings(np.vstack(embeddings), block_ids)
+    # Encode the entire batch in a single model.encode() call.
+    # SentenceTransformer is heavily optimised for batches — one call over N texts
+    # is far faster than N separate calls, as it amortises tokenisation overhead
+    # and fills the model's internal batch dimension properly.
+    # We still offload to an executor so the event loop (and TUI) stay responsive.
+    normalized = [_normalize_text(c) for c in contents]
+    embeddings = await loop.run_in_executor(
+        None, lambda: target_db.embedding_model.encode(normalized, convert_to_numpy=True)
+    )
+    target_db.add_embeddings(embeddings.astype(np.float32), block_ids)
 
 
 async def search_similar_blocks(
@@ -260,6 +267,9 @@ async def search_similar_blocks(
     if not isinstance(query, str) or not query.strip():
         return []
 
+    import asyncio
+    loop = asyncio.get_event_loop()
     target_db = db or _get_vector_db()
-    query_emb = target_db.get_embedding(_normalize_text(query))
+    # Run embedding generation in executor to avoid blocking event loop
+    query_emb = await loop.run_in_executor(None, target_db.get_embedding, _normalize_text(query))
     return target_db.search(query_emb, k)

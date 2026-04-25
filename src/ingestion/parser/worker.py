@@ -11,6 +11,7 @@ from src.ingestion.db import (
     insert_block_tags,
     get_connection,
     delete_note,  # Added this import
+    get_block_ids_for_note,
 )
 from src.ingestion.sync_worker import sync_trigger
 from src.ingestion.parser.core import parse_markdown
@@ -69,17 +70,7 @@ async def parser_worker() -> None:
         try:
             event: ParseEvent = await parser_queue.get()
 
-            # ---------------------------------------------------------
-            # NEW: Intercept deletions to ensure strict FIFO ordering
-            # ---------------------------------------------------------
-            if event.event_type == "deleted":
-                # Ensure the signature matches your db.py function
-                # (e.g., passing event.path or extracting ID)
-                await delete_note(event.path)
-                sync_trigger.set()
-                logging.info(f"Processed deletion: {event.path}")
-                continue
-            # ---------------------------------------------------------
+
 
             title, blocks, tasks, references, block_tags = parse_markdown(
                 event.path, event.raw_content
@@ -93,6 +84,18 @@ async def parser_worker() -> None:
                 event.event_type,
             )
 
+            # --- Vector DB sync: Step 1 & 2 ---
+            # Fetch old block_ids BEFORE insert_blocks deletes them from SQLite,
+            # so we can purge their stale embeddings from FAISS.
+            old_block_ids = await get_block_ids_for_note(note_id)
+            if old_block_ids:
+                vector_db.remove_by_block_ids(old_block_ids)
+                logging.info(
+                    f"Removed {len(old_block_ids)} stale embeddings for note {note_id}"
+                )
+
+            # --- SQLite transaction: Step 3 ---
+            # insert_blocks deletes the old rows and inserts fresh ones atomically.
             block_ids = await insert_blocks(note_id, blocks)
 
             # Remap parser-local block indices (0, 1, 2…) → real SQLite rowids

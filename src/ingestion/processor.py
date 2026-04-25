@@ -2,7 +2,12 @@ import asyncio
 from pathlib import Path
 from src.core.events import FileEvent, ParseEvent
 from src.core.queue import parser_queue
-from src.ingestion.db import delete_note
+from src.ingestion.db import delete_note, get_block_ids_for_note, get_connection
+
+# NOTE: src.rag.vector_db is intentionally NOT imported at the top level.
+# Importing it eagerly pulls in faiss + sentence-transformers on the main thread
+# at startup, which blocks the TUI from rendering. _get_vector_db() is imported
+# lazily inside _handle_deletion(), which only runs once a real delete event fires.
 
 async def process_event(event: FileEvent) -> None:
     """
@@ -19,7 +24,38 @@ async def process_event(event: FileEvent) -> None:
         print(f"--> [WARNING] Unknown event type: {event.event_type}")
 
 async def _handle_deletion(path: Path) -> None:
-    """Handles 'deleted' file events."""
+    """Handles 'deleted' file events.
+
+    Lifecycle:
+      1. Fetch old block_ids from SQLite (before they're gone).
+      2. Remove stale embeddings from the Vector DB.
+      3. Soft-delete the note (sets deleted_at; blocks are left for FK integrity
+         but are no longer reachable via the RAG index).
+    """
+    abs_path = str(path.resolve())
+
+    # Step 1 – find the note_id so we can look up its blocks
+    async with get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT id FROM notes WHERE file_path=? AND deleted_at IS NULL",
+            (abs_path,),
+        )
+        row = await cursor.fetchone()
+
+    if row:
+        note_id = row["id"]
+
+        # Step 2 – fetch old block IDs before any deletion touches them
+        old_block_ids = await get_block_ids_for_note(note_id)
+
+        # Step 3 – purge stale embeddings from FAISS
+        if old_block_ids:
+            from src.rag.vector_db import _get_vector_db  # deferred: avoids NLP import at startup
+            vector_db = _get_vector_db()
+            vector_db.remove_by_block_ids(old_block_ids)
+            print(f"--> [VectorDB] Removed {len(old_block_ids)} embeddings for deleted note {note_id}")
+
+    # Step 4 – soft-delete the note in SQLite
     await delete_note(path)
     print(f"Note deleted: {path}")
 
