@@ -169,4 +169,4 @@ class VimPanel(Widget):
 
         self.post_message(self.NoteSaved(filepath=filepath, subdir=subdir))
 
-        return True, filepath
+        return True, filepaths
