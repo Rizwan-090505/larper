@@ -7,7 +7,7 @@ from textual.widgets import Static, ListView, ListItem, Label, Input
 from textual.containers import Container, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.css.query import NoMatches
-from textual.worker import work
+from textual import work
 
 from layout import DefaultLayout, VimLayout
 from widgets.chat_input import ChatInput
