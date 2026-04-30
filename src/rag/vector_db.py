@@ -3,11 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 import pickle
-import numpy as np
-import faiss
+# DEFERRED IMPORTS: numpy and faiss imported inside methods to avoid startup cost
 
 from config import settings
-from src.rag.model_loader import _get_model  # assumes your shared embedding loader
+# model_loader stays - it's just a function definition, doesn't load model yet
 
 
 # ---------------------------------------------------------------------------
@@ -17,34 +16,51 @@ from src.rag.model_loader import _get_model  # assumes your shared embedding loa
 class VectorDB:
     def __init__(
         self,
-        index_path: str = settings.VECTOR_DB_PATH,  # <-- Updated here
+        index_path: str = settings.VECTOR_DB_PATH,
         embedding_model: str = settings.EMBEDDING_MODEL,
     ):
+        # Lazy imports - only when VectorDB is actually instantiated
+        import numpy as np
+        
         self.index_path = Path(index_path)
         self.mapping_path = self.index_path.with_suffix(".mapping")
         self.embeddings_path = self.index_path.with_suffix(".embeddings.npy")
 
-        # Shared / cached embedding model
-        self.embedding_model = _get_model(embedding_model)
+        # Store model name but don't load model yet
+        self._embedding_model_name = embedding_model
+        self._embedding_model = None  # Lazy loaded on first use
+        
+        # Default dimension for all-MiniLM-L6-v2
+        self.dimension = 384
 
-        # Dimension detection
-        if hasattr(self.embedding_model, "get_embedding_dimension"):
-            self.dimension = self.embedding_model.get_embedding_dimension()
-        else:
-            self.dimension = self.embedding_model.get_sentence_embedding_dimension()
-
-        self.index: Optional[faiss.IndexFlatIP] = None
+        self.index: Optional[object] = None  # faiss.IndexFlatIP
         self.id_map: Dict[int, int] = {}
         self.reverse_map: Dict[int, int] = {}
         self.embeddings = np.zeros((0, self.dimension), dtype=np.float32)
 
         self._load_or_create_index()
+    
+    @property
+    def embedding_model(self):
+        """Lazy load the embedding model only when first accessed."""
+        if self._embedding_model is None:
+            from src.rag.model_loader import _get_model
+            self._embedding_model = _get_model(self._embedding_model_name)
+            # Update dimension after model loads
+            if hasattr(self._embedding_model, "get_embedding_dimension"):
+                self.dimension = self._embedding_model.get_embedding_dimension()
+            else:
+                self.dimension = self._embedding_model.get_sentence_embedding_dimension()
+        return self._embedding_model
 
     # ------------------------------------------------------------------
     # Index lifecycle
     # ------------------------------------------------------------------
 
     def _load_or_create_index(self):
+        import faiss
+        import numpy as np
+        
         if self.index_path.exists():
             try:
                 self.index = faiss.read_index(str(self.index_path))
@@ -71,6 +87,8 @@ class VectorDB:
             self.reverse_map = {}
 
     def _load_embeddings(self):
+        import numpy as np
+        
         if self.embeddings_path.exists():
             self.embeddings = np.load(self.embeddings_path)
         else:
@@ -80,21 +98,29 @@ class VectorDB:
     # Embedding utils
     # ------------------------------------------------------------------
 
-    def _normalize_embeddings(self, embeddings: np.ndarray) -> np.ndarray:
+    def _normalize_embeddings(self, embeddings) -> object:
+        import numpy as np
+        
+        embeddings = np.asarray(embeddings, dtype=np.float32)
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
-        return embeddings.astype(np.float32) / norms
+        return embeddings / norms
 
     # ------------------------------------------------------------------
     # Index rebuild / persistence
     # ------------------------------------------------------------------
 
     def _rebuild_index(self):
+        import faiss
+        
         self.index = faiss.IndexFlatIP(self.dimension)
         if self.embeddings.shape[0] > 0:
-            self.index.add(self.embeddings.astype(np.float32))
+            self.index.add(self.embeddings.astype('float32'))
 
     def _save_state(self):
+        import faiss
+        import numpy as np
+        
         faiss.write_index(self.index, str(self.index_path))
         with open(self.mapping_path, "wb") as f:
             pickle.dump((self.id_map, self.reverse_map), f)
@@ -104,7 +130,9 @@ class VectorDB:
     # Public API
     # ------------------------------------------------------------------
 
-    def add_embeddings(self, embeddings: np.ndarray, block_ids: List[int]):
+    def add_embeddings(self, embeddings, block_ids: List[int]):
+        import numpy as np
+        
         embeddings = np.asarray(embeddings, dtype=np.float32)
 
         if embeddings.ndim == 1:
@@ -133,7 +161,9 @@ class VectorDB:
 
         self._save_state()
 
-    def search(self, query_embedding: np.ndarray, k: int = 5) -> List[Tuple[int, float]]:
+    def search(self, query_embedding, k: int = 5) -> List[Tuple[int, float]]:
+        import numpy as np
+        
         if self.index.ntotal == 0 or k <= 0:
             return []
 
@@ -157,12 +187,16 @@ class VectorDB:
 
         return results
 
-    def get_embedding(self, text: str) -> np.ndarray:
+    def get_embedding(self, text: str):
+        import numpy as np
+        
         if not isinstance(text, str):
             raise TypeError("Text must be string")
         return self.embedding_model.encode(text, convert_to_numpy=True)
 
     def remove_by_block_ids(self, block_ids: List[int]):
+        import numpy as np
+        
         block_ids_set = set(block_ids)
         if not block_ids_set:
             return
@@ -247,15 +281,12 @@ async def add_blocks_to_vector_db(
     import asyncio
     loop = asyncio.get_event_loop()
 
-    # Encode the entire batch in a single model.encode() call.
-    # SentenceTransformer is heavily optimised for batches — one call over N texts
-    # is far faster than N separate calls, as it amortises tokenisation overhead
-    # and fills the model's internal batch dimension properly.
-    # We still offload to an executor so the event loop (and TUI) stay responsive.
     normalized = [_normalize_text(c) for c in contents]
     embeddings = await loop.run_in_executor(
         None, lambda: target_db.embedding_model.encode(normalized, convert_to_numpy=True)
     )
+    
+    import numpy as np
     target_db.add_embeddings(embeddings.astype(np.float32), block_ids)
 
 
@@ -270,6 +301,5 @@ async def search_similar_blocks(
     import asyncio
     loop = asyncio.get_event_loop()
     target_db = db or _get_vector_db()
-    # Run embedding generation in executor to avoid blocking event loop
     query_emb = await loop.run_in_executor(None, target_db.get_embedding, _normalize_text(query))
     return target_db.search(query_emb, k)

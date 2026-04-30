@@ -10,12 +10,13 @@ from src.ingestion.db import (
     insert_references,
     insert_block_tags,
     get_connection,
-    delete_note,  # Added this import
+    delete_note,
     get_block_ids_for_note,
 )
 from src.ingestion.sync_worker import sync_trigger
 from src.ingestion.parser.core import parse_markdown
-from src.rag.vector_db import add_blocks_to_vector_db, _get_vector_db
+# DEFERRED IMPORT: Heavy NLP modules (sentence-transformers + faiss) are imported
+# inside parser_worker() to avoid blocking startup. This saves 1-2 seconds.
 
 
 async def _resolve_references(references: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -62,15 +63,20 @@ async def _resolve_references(references: List[Dict[str, Any]]) -> List[Dict[str
 
 async def parser_worker() -> None:
     logging.basicConfig(level=logging.INFO)
+    
+    # IMPORT HEAVY NLP MODULES HERE - deferred to avoid startup cost
+    # This happens AFTER the TUI has already started rendering
+    from src.rag.vector_db import add_blocks_to_vector_db, _get_vector_db
+    
+    logging.info("Parser worker starting - loading NLP models...")
     vector_db = _get_vector_db()
+    logging.info("Parser worker ready - NLP models loaded")
 
     while True:
         event = None
 
         try:
             event: ParseEvent = await parser_queue.get()
-
-
 
             title, blocks, tasks, references, block_tags = parse_markdown(
                 event.path, event.raw_content
