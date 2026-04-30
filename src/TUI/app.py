@@ -240,8 +240,6 @@ class DevWorkspaceApp(App):
         self._vim_mode = False
 
     def compose(self) -> ComposeResult:
-        # ChatInput lives inside DefaultLayout/VimLayout — NOT here at app level.
-        # Having it here AND inside a layout caused the double input box.
         yield DefaultLayout(id="default-layout")
         yield StatusBar(id="status-bar")
 
@@ -251,7 +249,7 @@ class DevWorkspaceApp(App):
         self._log_agent("[cyan]App ready! Press F3 for new page, F4 for new journal[/cyan]")
 
     def on_chat_input_submitted(self, event: ChatInput.Submitted):
-        """Handle chat input submission — bubbles up from inside layouts."""
+        """Handle chat input submission."""
         self._handle_input(event.value)
 
     def _handle_input(self, raw: str):
@@ -340,10 +338,51 @@ class DevWorkspaceApp(App):
         except NoMatches:
             pass
 
+    # ── File Opening & Vim Editing ───────────────────────────────────────────
+    
     def on_notes_panel_file_selected(self, event: NotesPanel.FileSelected):
-        self._open_file(event.filename)
+        """Handle file selection from notes panel - open in vim."""
+        filepath = Path(event.filepath)
+        
+        if filepath.exists():
+            # Open existing file in vim
+            self._edit_file_in_vim(filepath)
+        else:
+            # Fallback for in-memory files
+            self._open_file(event.filename)
+
+    def _edit_file_in_vim(self, filepath: Path):
+        """Open an existing file in vim editor."""
+        if not self._vim_mode:
+            self._switch_to_vim_mode()
+        
+        async def launch_vim():
+            await asyncio.sleep(0.35)  # Wait for layout switch
+            try:
+                vim = self.query_one("#vim-panel", VimPanel)
+                
+                # Determine subdir from filepath
+                subdir = "journals" if "journals" in filepath.parts else "pages"
+                
+                # Suspend TUI and launch vim
+                with self.suspend():
+                    success, saved_path = vim.open_vim_editor(filepath, subdir, is_new=False)
+                
+                if success and saved_path:
+                    self._log_agent(f"[green]✓ Edited[/green] {filepath.name}")
+                    self.query_one("#notes-panel", NotesPanel).refresh_notes()
+                    self.query_one("#todos-panel", TodosPanel).refresh_todos()
+                    self.query_one("#events-panel", EventsPanel).refresh_events()
+                else:
+                    self._log_agent("[yellow]No changes made[/yellow]")
+                    
+            except Exception as e:
+                self._log_agent(f"[red]✗ Vim error:[/red] {e}")
+        
+        asyncio.create_task(launch_vim())
 
     def _open_file(self, filename: str):
+        """Open file in display mode (legacy behavior)."""
         store.set_current_file(filename)
         if not self._vim_mode:
             self._switch_to_vim_mode()
@@ -366,6 +405,8 @@ class DevWorkspaceApp(App):
             self.query_one("#events-panel", EventsPanel).refresh_events()
         except NoMatches:
             pass
+
+    # ── Layout Switching ──────────────────────────────────────────────────────
 
     def _switch_to_vim_mode(self):
         self._vim_mode = True
@@ -447,17 +488,16 @@ class DevWorkspaceApp(App):
             self._focus_input()
         asyncio.create_task(do_switch())
 
+    # ── New File Creation (F3/F4) ─────────────────────────────────────────────
+
     def _open_vim_note(self, subdir: str):
-        """Entry point — logs and kicks off the worker."""
+        """Entry point for F3/F4 - opens file selector."""
         self._log_agent(f"[cyan]Opening file selector for {subdir}...[/cyan]")
         self._do_open_vim_note(subdir)
 
     @work
     async def _do_open_vim_note(self, subdir: str):
-        """
-        Textual @work worker — required so push_screen_wait is allowed.
-        asyncio.create_task() cannot use push_screen_wait; @work can.
-        """
+        """Worker to show file selector and launch vim."""
         try:
             result = await self.push_screen_wait(FileSelectorScreen(subdir))
         except Exception as exc:
@@ -495,18 +535,22 @@ class DevWorkspaceApp(App):
             self._log_agent(f"[red]✗ Vim error:[/red] {exc}")
 
     def on_vim_panel_note_saved(self, event: VimPanel.NoteSaved):
+        """Handle note saved message from vim panel."""
         self.on_vim_panel_note_saved_internal(event.filepath, event.subdir)
 
     def on_vim_panel_note_saved_internal(self, filepath, subdir):
+        """Internal handler for note saved."""
         rel = filepath.relative_to(store.get_active_folder())
         self._log_agent(f"[green]✓ Saved[/green] [bold]{rel}[/bold]")
         self._set_status(f"Saved {rel}")
         try:
             self.query_one("#notes-panel", NotesPanel).refresh_notes()
+            self.query_one("#todos-panel", TodosPanel).refresh_todos()
+            self.query_one("#events-panel", EventsPanel).refresh_events()
         except NoMatches:
             pass
 
-    # ── Actions ──────────────────────────────────────────────────────────────
+    # ── Actions ───────────────────────────────────────────────────────────────
 
     def action_toggle_mode(self):
         self._switch_to_default_mode() if self._vim_mode else self._switch_to_vim_mode()
