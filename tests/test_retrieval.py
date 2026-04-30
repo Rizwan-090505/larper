@@ -1,55 +1,51 @@
 import sys
+import asyncio
 from pathlib import Path
 
-# Ensure src/ is on path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Ensure project root is on path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import pytest
-from src.rag.vector_db import (
-    add_blocks_to_vector_db,
-    search_similar_blocks,
-    vector_db
-)
+from src.rag.retrieval import search_and_enrich_blocks
+from src.ingestion.db.schema import init_db
 
 
-@pytest.mark.asyncio
-async def test_add_and_search_blocks():
-    # 🔹 Reset DB to avoid flaky tests
-    if hasattr(vector_db, "clear"):
-        await vector_db.clear()
+async def main():
+    # Initialize DB/schema only
+    await init_db()
 
-    block_ids = [101, 102, 103]
-    contents = [
-        "The quick brown fox jumps over the lazy dog.",
-        "Artificial intelligence is transforming the world.",
-        "Vector databases store embeddings for fast retrieval."
-    ]
+    while True:
+        query = input("\nEnter your query (or type 'exit'): ").strip()
 
-    # 🔹 Add data
-    await add_blocks_to_vector_db(block_ids, contents)
+        if query.lower() == "exit":
+            print("Exiting...")
+            break
 
-    # 🔹 Query
-    query = "What stores embeddings for fast retrieval?"
-    results = await search_similar_blocks(query, k=2)
+        if not query:
+            print("Please enter a valid query.")
+            continue
 
-    print("\nResults:")
-    id_to_content = dict(zip(block_ids, contents))
-    for block_id, score in results:
-        text = id_to_content.get(block_id, "<not found>")
-        print(f"Block ID: {block_id}, Score: {score}, Text: {text}")
+        try:
+            results = await search_and_enrich_blocks(query, k=5)
 
-    # 🔹 Assertion
-    assert any(block_id == 103 for block_id, _ in results), \
-        "Expected block 103 to be among top results"
+            print("\nTop Retrieval Results:\n")
+
+            if not results:
+                print("No matching results found.")
+                continue
+
+            for i, result in enumerate(results, start=1):
+                print("=" * 70)
+                print(f"Rank      : {i}")
+                print(f"Block ID  : {result.get('id')}")
+                print(f"Score     : {result.get('similarity_score')}")
+                print(f"File Path : {result.get('file_path')}")
+                print(f"Content   : {result.get('content')}")
+                print(f"Related   : {result.get('related_blocks')}")
+                print("=" * 70)
+
+        except Exception as e:
+            print(f"\nError during retrieval: {e}")
 
 
-@pytest.mark.asyncio
-async def test_custom_query():
-    query = "There should be what"
-    results = await search_similar_blocks(query, k=3)
-
-    print("\nCustom Query Results:")
-    # If you want to see the text, you need to know the mapping from block_id to content.
-    # For this test, you can add your own mapping or print only IDs and scores.
-    for block_id, score in results:
-        print(f"Block ID: {block_id}, Score: {score}")
+if __name__ == "__main__":
+    asyncio.run(main())
