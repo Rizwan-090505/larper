@@ -1,0 +1,59 @@
+2026-05-01 20:25:40,181 INFO Parser worker starting - loading NLP models...
+2026-05-01 20:25:40,533 INFO Loading faiss with AVX2 support.
+2026-05-01 20:25:40,683 INFO Successfully loaded faiss with AVX2 support.
+2026-05-01 20:25:40,703 INFO Parser worker ready - NLP models loaded
+2026-05-01 20:25:40,729 INFO Vector DB preload complete.
+2026-05-01 20:26:06,011 INFO Watchdog event: created - C:\larper\data\pages\new.md
+2026-05-01 20:26:06,013 INFO Watchdog event: modified - C:\larper\data\pages\new.md
+2026-05-01 20:26:06,021 INFO Queue PUT: FileEvent(path=WindowsPath('C:/larper/data/pages/new.md'), event_type='created')
+2026-05-01 20:26:06,022 INFO Queue PUT: FileEvent(path=WindowsPath('C:/larper/data/pages/new.md'), event_type='modified')
+2026-05-01 20:26:06,030 INFO Queue GET: FileEvent(path=WindowsPath('C:/larper/data/pages/new.md'), event_type='created')
+2026-05-01 20:26:06,030 INFO Queue PUT: ParseEvent(path=WindowsPath('C:/larper/data/pages/new.md'), raw_content='# new.md\n# subdir: pages\n# date: 2026-05-01 20:26\n\n', note_type='page', event_type='created')
+2026-05-01 20:26:06,030 INFO Queue GET: FileEvent(path=WindowsPath('C:/larper/data/pages/new.md'), event_type='modified')
+2026-05-01 20:26:06,031 INFO Queue PUT: ParseEvent(path=WindowsPath('C:/larper/data/pages/new.md'), raw_content='# new.md\n# subdir: pages\n# date: 2026-05-01 20:26\n\n', note_type='page', event_type='modified')
+2026-05-01 20:26:06,031 INFO Queued event: created - C:\larper\data\pages\new.md
+2026-05-01 20:26:06,031 INFO Queued event: modified - C:\larper\data\pages\new.md
+2026-05-01 20:26:06,097 INFO Queue GET: ParseEvent(path=WindowsPath('C:/larper/data/pages/new.md'), raw_content='# new.md\n# subdir: pages\n# date: 2026-05-01 20:26\n\n', note_type='page', event_type='created')
+2026-05-01 20:26:22,635 INFO No device provided, using cpu
+2026-05-01 20:26:23,419 INFO HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/modules.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-01 20:26:23,420 WARNING Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-05-01 20:26:23,810 INFO HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json "HTTP/1.1 200 OK"
+2026-05-01 20:26:23,908 INFO HTTP Request: GET https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json "HTTP/1.1 200 OK"
+2026-05-01 20:26:24,233 INFO HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config_sentence_transformers.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-01 20:26:24,329 INFO HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json "HTTP/1.1 200 OK"
+2026-05-01 20:26:24,438 INFO HTTP Request: GET https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json "HTTP/1.1 200 OK"
+2026-05-01 20:26:24,449 INFO Loading SentenceTransformer model from sentence-transformers/all-MiniLM-L6-v2.
+2026-05-01 20:26:24,749 INFO HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config_sentence_transformers.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-01 20:26:24,848 INFO HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json "HTTP/1.1 200 OK"
+2026-05-01 20:26:25,155 INFO HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-05-01 20:26:25,256 INFO HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/README.md "HTTP/1.1 200 OK"
+2026-05-01 20:26:25,368 INFO HTTP Request: GET https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/README.md "HTTP/1.1 200 OK"
+2026-05-01 20:26:25,698 INFO HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/modules.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-01 20:26:25,791 INFO HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json "HTTP/1.1 200 OK"
+2026-05-01 20:26:26,533 INFO HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/sentence_bert_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-01 20:26:26,938 INFO HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/sentence_bert_config.json "HTTP/1.1 200 OK"
+2026-05-01 20:26:27,035 INFO HTTP Request: GET https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/sentence_bert_config.json "HTTP/1.1 200 OK"
+2026-05-01 20:26:27,355 INFO HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/adapter_config.json "HTTP/1.1 404 Not Found"
+2026-05-01 20:26:27,942 INFO HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-01 20:26:28,356 INFO HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config.json "HTTP/1.1 200 OK"
+2026-05-01 20:26:28,448 INFO HTTP Request: GET https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config.json "HTTP/1.1 200 OK"
+2026-05-01 20:26:28,937 INFO HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/model.safetensors "HTTP/1.1 302 Found"
+2026-05-01 20:26:29,289 INFO HTTP Request: GET https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2/xet-read-token/c9745ed1d9f207416be6d2e6f8de32d1f16199bf "HTTP/1.1 200 OK"
+2026-05-01 20:30:24,389 INFO Parser worker starting - loading NLP models...
+2026-05-01 20:30:24,625 INFO Loading faiss with AVX2 support.
+2026-05-01 20:30:24,670 INFO Successfully loaded faiss with AVX2 support.
+2026-05-01 20:30:24,678 INFO Parser worker ready - NLP models loaded
+2026-05-01 20:30:24,798 INFO Vector DB preload complete.
+2026-05-01 21:40:23,988 INFO Parser worker starting - loading NLP models...
+2026-05-01 21:40:24,224 INFO Loading faiss with AVX2 support.
+2026-05-01 21:40:24,256 INFO Successfully loaded faiss with AVX2 support.
+2026-05-01 21:40:24,262 INFO Parser worker ready - NLP models loaded
+2026-05-01 21:40:24,365 INFO Vector DB preload complete.
+2026-05-01 21:40:27,432 INFO Watchdog event: modified - C:\larper\data\pages\new.md
+2026-05-01 21:40:27,432 INFO Queue PUT: FileEvent(path=WindowsPath('C:/larper/data/pages/new.md'), event_type='modified')
+2026-05-01 21:40:27,432 INFO Queue GET: FileEvent(path=WindowsPath('C:/larper/data/pages/new.md'), event_type='modified')
+2026-05-01 21:40:27,433 INFO Queue PUT: ParseEvent(path=WindowsPath('C:/larper/data/pages/new.md'), raw_content='# new.md\n# subdir: pages\n# date: 2026-05-01 20:26\n\n', note_type='page', event_type='modified')
+2026-05-01 21:40:27,433 INFO Queued event: modified - C:\larper\data\pages\new.md
+2026-05-01 21:40:27,433 INFO Queue GET: ParseEvent(path=WindowsPath('C:/larper/data/pages/new.md'), raw_content='# new.md\n# subdir: pages\n# date: 2026-05-01 20:26\n\n', note_type='page', event_type='modified')
+2026-05-01 21:40:27,533 INFO Removed 3 stale embeddings for note 1
+2026-05-01 21:40:34,550 INFO No device provided, using cpu

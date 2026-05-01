@@ -1,3 +1,5 @@
+#TUI/app.py
+
 from __future__ import annotations
 import re
 import asyncio
@@ -21,9 +23,210 @@ ADD_TASK_RE = re.compile(r"^add task\s+(.+)$", re.IGNORECASE)
 ADD_EVENT_RE = re.compile(r"^add event\s+(.+?)\s+at\s+(\d{1,2}:\d{2})$", re.IGNORECASE)
 
 
+class FileSelectorScreen(ModalScreen):
+    """Modal screen for selecting or creating files before opening vim."""
+    
+    DEFAULT_CSS = """
+    FileSelectorScreen {
+        align: center middle;
+    }
+    
+    #file-selector-dialog {
+        width: 80;
+        height: 32;
+        border: thick $accent;
+        background: $surface;
+        padding: 0;
+    }
+    
+    #file-selector-dialog .dialog-header {
+        background: $accent;
+        color: $text;
+        height: 3;
+        padding: 1;
+        text-style: bold;
+        dock: top;
+    }
+    
+    #file-selector-dialog .dialog-body {
+        height: 1fr;
+        padding: 1 2;
+    }
+    
+    #file-selector-dialog .file-list-section {
+        height: 1fr;
+        border: solid $primary;
+        margin-bottom: 1;
+    }
+    
+    #file-selector-dialog ListView {
+        height: 100%;
+        background: $surface;
+    }
+    
+    #file-selector-dialog ListItem {
+        padding: 0 1;
+    }
+    
+    #file-selector-dialog ListItem:hover {
+        background: $primary-darken-1;
+    }
+    
+    #file-selector-dialog ListItem.--highlight {
+        background: $primary;
+    }
+    
+    #file-selector-dialog .input-section {
+        height: auto;
+        border: solid $accent;
+        padding: 1;
+        background: $surface-darken-1;
+        margin-bottom: 1;
+    }
+    
+    #file-selector-dialog Input {
+        width: 100%;
+        margin-top: 1;
+    }
+    
+    #file-selector-dialog .dialog-footer {
+        height: 3;
+        background: $surface-darken-1;
+        padding: 1;
+        text-align: center;
+        color: $text-muted;
+        dock: bottom;
+    }
+    """
+
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+        ("ctrl+n", "focus_input", "New File"),
+    ]
+
+    def __init__(self, subdir: str = "pages"):
+        super().__init__()
+        self.subdir = subdir
+        self._files: list[Path] = []
+
+    def compose(self) -> ComposeResult:
+        with Container(id="file-selector-dialog"):
+            yield Static(
+                f"  📁 Select or Create {self.subdir.title()}",
+                classes="dialog-header"
+            )
+            
+            with Vertical(classes="dialog-body"):
+                with VerticalScroll(classes="file-list-section"):
+                    yield ListView(id="file-list")
+                
+                with Container(classes="input-section"):
+                    yield Label("[bold]New file name:[/bold]")
+                    yield Input(
+                        placeholder="my_note.md",
+                        id="filename-input"
+                    )
+            
+            yield Static(
+                "[dim]↑↓[/dim] Navigate  [dim]Enter[/dim] Open/Create  [dim]Ctrl+N[/dim] New  [dim]Esc[/dim] Cancel",
+                classes="dialog-footer"
+            )
+
+    def on_mount(self):
+        self._load_files()
+        self._focus_list()
+
+    def _load_files(self):
+        """Load existing files from the target directory."""
+        target_dir = store.get_active_folder() / self.subdir
+        if not target_dir.exists():
+            target_dir.mkdir(parents=True, exist_ok=True)
+        
+        self._files = sorted(
+            target_dir.glob("*.md"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True
+        )
+        
+        file_list = self.query_one("#file-list", ListView)
+        file_list.clear()
+        
+        if not self._files:
+            file_list.append(
+                ListItem(Label("[dim italic]No existing files. Create one below ↓[/dim italic]"))
+            )
+        else:
+            for filepath in self._files:
+                mtime = filepath.stat().st_mtime
+                from datetime import datetime
+                ts = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+                label = f"📄 [bold]{filepath.name}[/bold]  [dim]({ts})[/dim]"
+                file_list.append(ListItem(Label(label)))
+
+    def _focus_list(self):
+        """Focus the file list."""
+        try:
+            self.query_one("#file-list", ListView).focus()
+        except:
+            pass
+
+    def action_focus_input(self):
+        """Action to focus the input field."""
+        try:
+            self.query_one("#filename-input", Input).focus()
+        except:
+            pass
+
+    def action_cancel(self):
+        """Action to cancel and close the dialog."""
+        self.dismiss(None)
+
+    def on_list_view_selected(self, event: ListView.Selected):
+        """Handle ListView selection (Enter key or mouse click)."""
+        event.stop()
+        
+        # First check if user has typed something in the input
+        try:
+            input_widget = self.query_one("#filename-input", Input)
+            if input_widget.value.strip():
+                self._create_new_file(input_widget.value.strip())
+                return
+        except:
+            pass
+        
+        # Otherwise, open the selected file from the list
+        try:
+            file_list = self.query_one("#file-list", ListView)
+            index = file_list.index
+            
+            if index is not None and self._files and 0 <= index < len(self._files):
+                selected_file = self._files[index]
+                self.dismiss((selected_file, False))
+            else:
+                self.action_focus_input()
+        except Exception:
+            self.action_focus_input()
+
+    def _create_new_file(self, filename: str):
+        """Create a new file with the given name."""
+        if not filename.endswith(".md"):
+            filename += ".md"
+        filepath = store.get_active_folder() / self.subdir / filename
+        self.dismiss((filepath, True))
+
+    def on_input_submitted(self, event: Input.Submitted):
+        """Handle Enter key in the input field."""
+        if event.input.id == "filename-input":
+            value = event.input.value.strip()
+            if value:
+                self._create_new_file(value)
+
+
 class DevWorkspaceApp(App):
+    """Main TUI application for DevWorkspace."""
+    
     CSS_PATH = "styles/app.css"
-    TITLE = "DevWorkspace"
+    
     BINDINGS = [
         ("f1", "toggle_mode", "Toggle Vim Mode"),
         ("f2", "focus_input", "Focus Input"),
@@ -35,17 +238,13 @@ class DevWorkspaceApp(App):
         self._vim_mode = False
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            "  ⚡ DevWorkspace    [dim]F1[/dim] Toggle Vim   [dim]F2[/dim] Focus Input   [dim]F10[/dim] Quit",
-            id="app-header"
-        )
+        # ChatInput lives inside DefaultLayout/VimLayout — NOT here at app level.
+        # Having it here AND inside a layout caused the double input box.
         yield DefaultLayout(id="default-layout")
         yield StatusBar(id="status-bar")
 
     def on_mount(self):
-        store.add_note_file("README.md")
-        store.add_note_file("notes.md")
-        store.add_note_file("todo.md")
+        """Called when app is mounted."""
         self._focus_input()
 
     # ─── Input Handling ───────────────────────────────────────────────────────
@@ -170,37 +369,66 @@ class DevWorkspaceApp(App):
         except NoMatches:
             pass
 
-    # ─── File Open ────────────────────────────────────────────────────────────
-
     def on_notes_panel_file_selected(self, event: NotesPanel.FileSelected):
-        self._open_file(event.filename)
+        # FIX: use filepath (full path) instead of filename (bare name)
+        self._open_file(event.filepath)
 
-    def _open_file(self, filename: str):
-        store.set_current_file(filename)
+    def on_notes_panel_edit_requested(self, event: NotesPanel.EditRequested):
+        # FIX: handle 'e' key edit requests from the notes panel
+        self._open_vim_note_at_path(Path(event.filepath))
+
+    def _open_file(self, filepath: str):
+        store.set_current_file(filepath)
         if not self._vim_mode:
             self._switch_to_vim_mode()
         else:
-            try:
-                vim = self.query_one("#vim-panel", VimPanel)
-                vim.load_file(filename)
-                tabs = self.query_one("#tab-bar", TabBar)
-                tabs.open_file(filename)
-                self.query_one("#todos-panel", TodosPanel).refresh_todos()
-                self.query_one("#events-panel", EventsPanel).refresh_events()
-            except NoMatches:
-                pass
-
+            self._refresh_vim_layout(filename)
         try:
             sb = self.query_one("#status-bar", StatusBar)
-            sb.current_file = filename
-            sb.set_message(f"Opened {filename}")
+            sb.current_file = filepath
+            sb.set_message(f"Opened {Path(filepath).name}")
+        except NoMatches:
+            pass
+        self._log_agent(f"[cyan]📄 Opened:[/cyan] [bold]{filename}[/bold]")
+        self._focus_input()
+
+    def _refresh_vim_layout(self, filename: str):
+        try:
+            self.query_one("#vim-panel", VimPanel).load_file(filename)
+            self.query_one("#tab-bar", TabBar).open_file(filename)
+            self.query_one("#todos-panel", TodosPanel).refresh_todos()
+            self.query_one("#events-panel", EventsPanel).refresh_events()
         except NoMatches:
             pass
 
-        self._log_agent(f"[cyan]📄 Opened:[/cyan] [bold]{filename}[/bold]  — start typing to add notes.")
-        self._focus_input()
+    def _open_vim_note_at_path(self, filepath: Path):
+        """Open a specific file path directly in vim (used by EditRequested)."""
+        subdir = filepath.parent.name if filepath.parent.name in ("pages", "journals") else "pages"
+        is_new = not filepath.exists()
+        self._log_agent(f"[cyan]Opening {filepath.name} in vim...[/cyan]")
+        self._do_open_vim_note_at_path(filepath, subdir, is_new)
 
-    # ─── Layout Switch with Animations ───────────────────────────────────────
+    @work
+    async def _do_open_vim_note_at_path(self, filepath: Path, subdir: str, is_new: bool):
+        if not self._vim_mode:
+            self._switch_to_vim_mode()
+            await asyncio.sleep(0.35)
+        try:
+            vim = self.query_one("#vim-panel", VimPanel)
+        except NoMatches:
+            self._log_agent("[red]✗ Vim panel not found[/red]")
+            return
+        try:
+            with self.suspend():
+                success, saved_path = vim.open_vim_editor(filepath, subdir, is_new)
+            if success and saved_path:
+                self.on_vim_panel_note_saved_internal(saved_path, subdir)
+            else:
+                self._log_agent("[yellow]No changes made[/yellow]")
+        except Exception as exc:
+            self._log_agent(f"[red]✗ Vim error:[/red] {exc}")
+
+    # ── Layout switching ──────────────────────────────────────────────────────
 
     def _switch_to_vim_mode(self):
         self._vim_mode = True
@@ -222,37 +450,35 @@ class DevWorkspaceApp(App):
             await asyncio.sleep(0.12)
 
             if store.get_current_file():
+                await self._animate_vim_panels(store.get_current_file())
+            self._focus_input()
+        asyncio.create_task(do_switch())
+
+    async def _animate_vim_panels(self, filename: str):
+        try:
+            vim = self.query_one("#vim-panel", VimPanel)
+            vim.styles.opacity = 0.0
+            vim.load_file(filename)
+            vim.styles.animate("opacity", value=1.0, duration=0.28)
+            tabs = self.query_one("#tab-bar", TabBar)
+            tabs.open_file(filename)
+            await asyncio.sleep(0.06)
+            for p_id, cls, method in [
+                ("#todos-panel", TodosPanel, "refresh_todos"),
+                ("#events-panel", EventsPanel, "refresh_events"),
+                ("#notes-panel", NotesPanel, "refresh_notes"),
+            ]:
                 try:
-                    vim = self.query_one("#vim-panel", VimPanel)
-                    vim.styles.opacity = 0.0
-                    vim.load_file(store.get_current_file())
-                    vim.styles.animate("opacity", value=1.0, duration=0.28)
-
-                    tabs = self.query_one("#tab-bar", TabBar)
-                    tabs.open_file(store.get_current_file())
-
+                    p = self.query_one(p_id, cls)
+                    p.styles.opacity = 0.0
+                    if hasattr(p, method):
+                        getattr(p, method)()
+                    p.styles.animate("opacity", value=1.0, duration=0.25)
                     await asyncio.sleep(0.06)
-
-                    for panel_id, cls in [
-                        ("#todos-panel", TodosPanel),
-                        ("#events-panel", EventsPanel),
-                        ("#notes-panel", NotesPanel),
-                    ]:
-                        try:
-                            w = self.query_one(panel_id, cls)
-                            w.styles.opacity = 0.0
-                            if hasattr(w, "refresh_todos"):
-                                w.refresh_todos()
-                            elif hasattr(w, "refresh_events"):
-                                w.refresh_events()
-                            elif hasattr(w, "refresh_notes"):
-                                w.refresh_notes()
-                            w.styles.animate("opacity", value=1.0, duration=0.25)
-                            await asyncio.sleep(0.06)
-                        except NoMatches:
-                            pass
                 except NoMatches:
                     pass
+        except NoMatches:
+            pass
 
             self._focus_input()
 
@@ -297,10 +523,68 @@ class DevWorkspaceApp(App):
                     pass
 
             self._focus_input()
+        asyncio.create_task(do_switch())
 
-        asyncio.get_event_loop().create_task(do_switch())
+    def _open_vim_note(self, subdir: str):
+        """Entry point — logs and kicks off the worker."""
+        self._log_agent(f"[cyan]Opening file selector for {subdir}...[/cyan]")
+        self._do_open_vim_note(subdir)
 
-    # ─── Actions ─────────────────────────────────────────────────────────────
+    @work
+    async def _do_open_vim_note(self, subdir: str):
+        """
+        Textual @work worker — required so push_screen_wait is allowed.
+        asyncio.create_task() cannot use push_screen_wait; @work can.
+        """
+        try:
+            result = await self.push_screen_wait(FileSelectorScreen(subdir))
+        except Exception as exc:
+            self._log_agent(f"[red]✗ Error in file selector:[/red] {exc}")
+            return
+
+        if result is None:
+            self._log_agent("[yellow]File selection cancelled[/yellow]")
+            return
+
+        filepath, is_new = result
+        self._log_agent(f"[cyan]Selected: {filepath.name} (new={is_new})[/cyan]")
+
+        if not self._vim_mode:
+            self._log_agent("[cyan]Switching to vim mode...[/cyan]")
+            self._switch_to_vim_mode()
+            await asyncio.sleep(0.35)
+
+        try:
+            vim = self.query_one("#vim-panel", VimPanel)
+        except NoMatches:
+            self._log_agent("[red]✗ Vim panel not found[/red]")
+            return
+
+        self._log_agent(f"[cyan]Launching vim editor for {filepath.name}...[/cyan]")
+        try:
+            with self.suspend():
+                success, saved_path = vim.open_vim_editor(filepath, subdir, is_new)
+
+            if success and saved_path:
+                self.on_vim_panel_note_saved_internal(saved_path, subdir)
+            else:
+                self._log_agent("[yellow]No changes made[/yellow]")
+        except Exception as exc:
+            self._log_agent(f"[red]✗ Vim error:[/red] {exc}")
+
+    def on_vim_panel_note_saved(self, event: VimPanel.NoteSaved):
+        self.on_vim_panel_note_saved_internal(event.filepath, event.subdir)
+
+    def on_vim_panel_note_saved_internal(self, filepath, subdir):
+        rel = filepath.relative_to(store.get_active_folder())
+        self._log_agent(f"[green]✓ Saved[/green] [bold]{rel}[/bold]")
+        self._set_status(f"Saved {rel}")
+        try:
+            self.query_one("#notes-panel", NotesPanel).refresh_notes()
+        except NoMatches:
+            pass
+
+    # ── Actions ──────────────────────────────────────────────────────────────
 
     def action_toggle_mode(self):
         if self._vim_mode:
