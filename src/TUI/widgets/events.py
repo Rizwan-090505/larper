@@ -23,7 +23,8 @@ class EventItem(ListItem):
         self._item = item
 
     def compose(self) -> ComposeResult:
-        yield Label(f"  ◷  {self._item.time}  →  {self._item.text}")
+        when = " ".join(part for part in [self._item.date, self._item.time] if part)
+        yield Label(f"  ◷  {when or 'unscheduled'}  →  {self._item.text}")
 
     def on_mount(self):
         async def highlight():
@@ -35,6 +36,8 @@ class EventItem(ListItem):
 
 
 class EventsPanel(Widget):
+    can_focus = True
+
     DEFAULT_CSS = """
     EventsPanel {
         height: 1fr;

@@ -22,10 +22,11 @@ class Item:
     text: str
     file: str
     created_at: datetime
+    date: Optional[str] = None
     time: Optional[str] = None
 
     def is_event(self) -> bool:
-        return self.time is not None
+        return self.time is not None or self.date is not None
 
 
 @dataclass
@@ -48,13 +49,24 @@ class Store:
         return self._current_file
 
     def set_current_file(self, filename: str):
+        if not filename:
+            self._current_file = None
+            return
         self._current_file = filename
         if filename not in self._files:
             self._files[filename] = []
         if filename not in self._notes:
             self._notes.append(filename)
 
-    def add_item(self, text: str, time: Optional[str] = None) -> Optional[Item]:
+    def clear_current_file(self):
+        self._current_file = None
+
+    def add_item(
+        self,
+        text: str,
+        time: Optional[str] = None,
+        date: Optional[str] = None,
+    ) -> Optional[Item]:
         if not self._current_file:
             return None
         item = Item(
@@ -62,6 +74,7 @@ class Store:
             text=text,
             file=self._current_file,
             created_at=datetime.now(),
+            date=date,
             time=time,
         )
         self._items[item.id] = item
@@ -125,6 +138,17 @@ class Store:
         filepath = target_dir / filename
         filepath.write_text(content, encoding="utf-8")
         self.add_note_file(str(Path(subdir) / filename))
+        return filepath
+
+    def append_line_to_current_file(self, line: str, subdir: str = "journals") -> Optional[Path]:
+        if not self._current_file:
+            return None
+        filepath = self.get_active_folder() / self._current_file
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        existing = filepath.read_text(encoding="utf-8") if filepath.exists() else ""
+        separator = "" if existing.endswith("\n") or not existing else "\n"
+        filepath.write_text(f"{existing}{separator}{line}\n", encoding="utf-8")
+        self.add_note_file(str(filepath.relative_to(self.get_active_folder())))
         return filepath
 
     def get_active_folder(self) -> Path:

@@ -41,6 +41,8 @@ class NoteItem(ListItem):
 
 
 class NotesPanel(Widget):
+    can_focus = True
+
     DEFAULT_CSS = """
     NotesPanel {
         height: 1fr;
@@ -62,7 +64,7 @@ class NotesPanel(Widget):
     """
 
     BINDINGS = [
-        Binding("e", "edit_note", "Edit (vim)", show=True),
+        Binding("e", "edit_note", "Edit (nvim)", show=True),
         Binding("enter", "open_note", "Open", show=True),
     ]
 
@@ -98,7 +100,8 @@ class NotesPanel(Widget):
                     for filepath in dir_path.glob("*.md"):
                         try:
                             mtime = filepath.stat().st_mtime
-                            file_stats.append((mtime, filepath.name, str(filepath)))
+                            rel = str(filepath.relative_to(active_folder))
+                            file_stats.append((mtime, filepath.name, rel))
                         except Exception:
                             pass
                             

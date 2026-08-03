@@ -76,6 +76,8 @@ class TodoItem(ListItem):
 
 
 class TodosPanel(Widget):
+    can_focus = True
+
     DEFAULT_CSS = """
     TodosPanel {
         height: 1fr;

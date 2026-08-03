@@ -2,7 +2,7 @@ from src.ingestion.db.connection import get_connection
 
 
 async def insert_tasks(note_id: int, tasks: list) -> None:
-    """Insert/update tasks for a note, tracking sync status for changes."""
+    """Insert/update local tasks for a note."""
     async with get_connection() as conn:
         # Null out block_id on ALL existing tasks for this note first —
         # blocks were just re-inserted with new rowids, so any surviving
@@ -32,7 +32,7 @@ async def insert_tasks(note_id: int, tasks: list) -> None:
                     or old['due_date'] != task['due_date']
                     or old['raw_text'] != task['raw_text']
                 )
-                sync_status = 'pending' if needs_sync else old['sync_status']
+                sync_status = 'local' if needs_sync else (old['sync_status'] or 'local')
 
                 await conn.execute("""
                     UPDATE tasks
@@ -52,7 +52,7 @@ async def insert_tasks(note_id: int, tasks: list) -> None:
                     INSERT INTO tasks
                         (note_id, block_id, raw_text, title, is_done, due_date,
                          priority, tags, recurrence, start_date, sync_status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'local')
                 """, (
                     note_id, task['block_id'], task['raw_text'], title,
                     task['is_done'], task['due_date'], task.get('priority'),
@@ -66,7 +66,7 @@ async def insert_tasks(note_id: int, tasks: list) -> None:
         for title, row in existing_map.items():
             if title not in new_titles:
                 await conn.execute("""
-                    UPDATE tasks SET is_deleted=1, sync_status='pending' WHERE id=?
+                    UPDATE tasks SET is_deleted=1, sync_status='local' WHERE id=?
                 """, (row['id'],))
                 deleted_count += 1
 

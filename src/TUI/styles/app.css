@@ -52,6 +52,10 @@ AgentPanel {
     transition: opacity 250ms linear;
 }
 
+.active-pane {
+    border: heavy #e0af68;
+}
+
 /* ─── Scrollbars ──────────────────────────────────────────────────────────── */
 
 * {
@@ -239,6 +243,11 @@ TabBar .tab.active {
     background: #7aa2f7;
     color: #1a1b26;
     text-style: bold;
+}
+
+TabBar .tab.minimized {
+    color: #565f89;
+    text-style: italic;
 }
 
 /* ─── Status Bar ──────────────────────────────────────────────────────────── */

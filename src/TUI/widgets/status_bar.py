@@ -40,7 +40,7 @@ class StatusBar(Widget):
         now = datetime.now().strftime("%H:%M:%S")
         left = self.query_one("#status-left", Static)
         right = self.query_one("#status-right", Static)
-        left.update(f" ⚡ DevWorkspace  |  {self.message}  |  File: {self.current_file}")
+        left.update(f" LARPer  |  {self.message}  |  {self.current_file}")
         right.update(f"{now} ")
 
     def set_message(self, msg: str, duration: float = 3.0):

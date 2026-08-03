@@ -1,4 +1,5 @@
 from __future__ import annotations
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -10,7 +11,8 @@ from textual.message import Message
 
 
 class VimPanel(Widget):
-    """Panel that displays vim content and manages vim subprocess."""
+    """Panel that displays nvim content and manages the editor subprocess."""
+    can_focus = True
     
     DEFAULT_CSS = """
     VimPanel {
@@ -47,13 +49,13 @@ class VimPanel(Widget):
         self._content_lines: list[str] = []
 
     def compose(self) -> ComposeResult:
-        yield Static("  VIM EDITOR", id="vim-title", classes="vim-title")
+        yield Static("  NVIM EDITOR", id="vim-title", classes="vim-title")
         yield Static(id="vim-content")
 
     def load_file(self, filename: str):
         """Load a file into the vim panel display."""
         self.current_file = filename
-        self._update_title(f"  ✎  {filename}  [vim]")
+        self._update_title(f"  ✎  {filename}  [nvim]")
         
         from state.store import store
         path = store.get_active_folder() / filename
@@ -108,7 +110,7 @@ class VimPanel(Widget):
         is_new: bool = True
     ) -> tuple[bool, Path | None]:
         """
-        Open vim in raw terminal mode (TUI is suspended by caller).
+        Open nvim in raw terminal mode (TUI is suspended by caller).
 
         Returns:
             (success, filepath) — success is True if file was saved with changes
@@ -131,20 +133,25 @@ class VimPanel(Widget):
         action = "Creating" if is_new else "Editing"
         self._update_title(f"  ✎  {action} {filepath.name} …")
 
+        editor = shutil.which("nvim") or shutil.which("vim")
+        if not editor:
+            self._update_title("  ✎  NVIM EDITOR  [nvim not found]")
+            return False, None
+
         try:
             result = subprocess.run(
-                ["vim", str(filepath)],
-                stdin=None,  # inherit stdin so vim is interactive
+                [editor, str(filepath)],
+                stdin=None,  # inherit stdin so the editor is interactive
             )
         except FileNotFoundError:
-            self._update_title("  ✎  VIM EDITOR  [vim not found - install vim]")
+            self._update_title("  ✎  NVIM EDITOR  [editor not found]")
             return False, None
         except Exception as e:
-            self._update_title(f"  ✎  VIM EDITOR  [error: {e}]")
+            self._update_title(f"  ✎  NVIM EDITOR  [error: {e}]")
             return False, None
 
         if result.returncode != 0:
-            self._update_title("  ✎  VIM EDITOR  [vim failed]")
+            self._update_title("  ✎  NVIM EDITOR  [editor failed]")
             return False, None
 
         try:
@@ -154,7 +161,7 @@ class VimPanel(Widget):
             return False, None
 
         if not content or content == initial_content.strip():
-            self._update_title("  ✎  VIM EDITOR  [no changes]")
+            self._update_title("  ✎  NVIM EDITOR  [no changes]")
             return False, None
 
         try:
@@ -169,4 +176,4 @@ class VimPanel(Widget):
 
         self.post_message(self.NoteSaved(filepath=filepath, subdir=subdir))
 
-        return True, filepaths
+        return True, filepath

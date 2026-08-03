@@ -8,8 +8,8 @@ To ensure embeddings and the vector database work correctly, make sure the follo
 ACTIVE_FOLDER=/absolute/path/to/your/project
 DB_PATH=notes.db
 VECTOR_DB_PATH=faiss_index.bin
-API_KEY=your_api_key
-MODEL=your_model_name
+OPENROUTER_API_KEY=your_openrouter_key
+OPENROUTER_MODEL=openai/gpt-4.1-mini
 EMBEDDING_MODEL=all-MiniLM-L6-v2
 HF_DIR=/absolute/path/to/model/cache/
 ```
@@ -22,13 +22,13 @@ The config.py should load these variables using Pydantic's `BaseSettings`:
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-  API_KEY: str
-  ACTIVE_FOLDER: str
-  MODEL: str
-  DB_PATH: str
-  VECTOR_DB_PATH: str
-  EMBEDDING_MODEL: str
-  HF_DIR: str
+  ACTIVE_FOLDER: str = "."
+  DB_PATH: str = "notes.db"
+  VECTOR_DB_PATH: str = "faiss_index.bin"
+  EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+  HF_DIR: str = ".cache/huggingface"
+  OPENROUTER_API_KEY: str = ""
+  OPENROUTER_MODEL: str = "openai/gpt-4.1-mini"
 
   model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
@@ -41,10 +41,24 @@ settings = Settings()
 - faiss
 - numpy
 - pydantic-settings
+- langchain-openrouter
+- dateparser
 
 ## Usage
 
 The parser worker will automatically generate embeddings for each block and store them in the vector DB. Logs will indicate successful embedding generation and storage.
+
+## Personal Manager
+
+The TUI is local-first. Notes, tasks, events, tags, references, and embeddings stay in the local workspace; Todoist/Google Calendar sync is not started.
+
+Type naturally in the agent input:
+
+- `remind me to renew passport tomorrow #admin`
+- `meeting with Sam Friday at 14:30 #work`
+- `what do I know about the migration plan?`
+
+Retrieval is hybrid: embedding similarity, keyword overlap, tag graph matches, temporal matches, and linked/parent/child block graph expansion are combined before the agent answers.
 # LARPER
 
 # LARPer

@@ -13,7 +13,6 @@ from src.ingestion.db import (
     delete_note,
     get_block_ids_for_note,
 )
-from src.ingestion.sync_worker import sync_trigger
 from src.ingestion.parser.core import parse_markdown
 # DEFERRED IMPORT: Heavy NLP modules (sentence-transformers + faiss) are imported
 # inside parser_worker() to avoid blocking startup. This saves 1-2 seconds.
@@ -130,8 +129,6 @@ async def parser_worker() -> None:
                 resolved_refs = await _resolve_references(references)
                 if resolved_refs:
                     await insert_references(note_id, resolved_refs)
-
-            sync_trigger.set()
 
             logging.info(
                 f"Processed {event.event_type}: {event.path} (ID: {note_id})"
