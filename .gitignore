@@ -45,3 +45,6 @@ journals/**
 *.npy
 *.bin
 *.mapping
+
+# Local vector database directory
+vector_db/
