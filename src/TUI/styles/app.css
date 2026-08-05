@@ -1,83 +1,157 @@
-/* ─── Global ──────────────────────────────────────────────────────────────── */
+/* ─── Tokyo Night palette ──────────────────────────────────────────────────── */
 
 Screen {
     background: #1a1b26;
-    color: #c0caf5;
+    color: #a9b1d6;
     layout: vertical;
 }
 
-#app-header {
-    height: 1;
-    background: #7aa2f7;
-    color: #1a1b26;
+/* ─── Layout ───────────────────────────────────────────────────────────────── */
+
+MainLayout {
+    height: 1fr;
+    layout: horizontal;
+}
+
+#sidebar-col {
+    width: 18;
+    height: 1fr;
+    layout: vertical;
+    background: #1e2030;
+    border-right: solid #3b4261;
+}
+
+#chat-col {
+    width: 1fr;
+    height: 1fr;
+    layout: vertical;
+    background: #1a1b26;
+}
+
+#right-col {
+    width: 28;
+    height: 1fr;
+    layout: vertical;
+    background: #1e2030;
+    border-left: solid #3b4261;
+}
+
+/* ─── Sidebar ──────────────────────────────────────────────────────────────── */
+
+SidebarPanel {
+    height: 1fr;
+    background: #1e2030;
+    padding: 1 0;
+}
+
+SidebarPanel:focus {
+    border: none;
+}
+
+SidebarPanel .logo {
+    color: #e0af68;
     text-style: bold;
     padding: 0 2;
-    dock: top;
+    height: 2;
 }
 
-/* ─── Transitions ─────────────────────────────────────────────────────────── */
-
-DefaultLayout {
-    opacity: 1.0;
-    transition: opacity 200ms linear;
+SidebarPanel .nav-item {
+    padding: 0 2;
+    height: 1;
+    color: #565f89;
 }
 
-VimLayout {
-    opacity: 1.0;
-    transition: opacity 200ms linear;
+SidebarPanel .nav-item:hover {
+    color: #c0caf5;
+    background: #292e42;
 }
 
-VimPanel {
-    opacity: 1.0;
-    transition: opacity 300ms linear;
+SidebarPanel .nav-item.active {
+    color: #7aa2f7;
+    text-style: bold;
+    background: #292e42;
 }
 
-TodosPanel {
-    opacity: 1.0;
-    transition: opacity 300ms linear;
+SidebarPanel .nav-item.focused-cursor {
+    color: #c0caf5;
+    background: #2f3549;
 }
 
-EventsPanel {
-    opacity: 1.0;
-    transition: opacity 300ms linear;
+SidebarPanel .nav-item.active.focused-cursor {
+    color: #7aa2f7;
+    background: #2f3549;
+    text-style: bold;
 }
 
-NotesPanel {
-    opacity: 1.0;
-    transition: opacity 300ms linear;
+SidebarPanel .hint {
+    color: #3b4261;
+    padding: 0 2;
+    height: 1;
 }
+
+SidebarPanel .divider {
+    color: #3b4261;
+    height: 1;
+    padding: 0 1;
+}
+
+SidebarPanel .nav-label {
+    color: #3b4261;
+    padding: 1 2 0 2;
+    height: 2;
+}
+
+/* ─── Agent Panel ──────────────────────────────────────────────────────────── */
 
 AgentPanel {
-    opacity: 1.0;
-    transition: opacity 250ms linear;
+    height: 1fr;
+    background: #1a1b26;
+    border: none;
 }
 
-.active-pane {
-    border: heavy #e0af68;
+AgentPanel .panel-title {
+    background: #1e2030;
+    color: #565f89;
+    padding: 0 2;
+    height: 1;
 }
 
-/* ─── Scrollbars ──────────────────────────────────────────────────────────── */
-
-* {
-    scrollbar-color: #7aa2f7;
-    scrollbar-color-hover: #bb9af7;
-    scrollbar-background: #1e2030;
+AgentPanel RichLog {
+    background: transparent;
+    padding: 0 2;
+    color: #a9b1d6;
+    scrollbar-color: #3b4261;
     scrollbar-size: 1 1;
 }
 
-/* ─── Input ───────────────────────────────────────────────────────────────── */
-
 ChatInput {
     height: 3;
-    border: solid #7aa2f7;
     background: #1e2030;
+    border-top: solid #3b4261;
+    border-bottom: none;
+    border-left: none;
+    border-right: none;
+    padding: 0;
+    layout: horizontal;
+    align: left middle;
+}
+
+ChatInput #prompt-label {
+    width: 4;
+    height: 1;
+    color: #e0af68;
     padding: 0 1;
+    text-style: bold;
+    content-align: left middle;
 }
 
 ChatInput Input {
     background: transparent;
     border: none;
+    height: 1;
     color: #c0caf5;
+    padding: 0;
+    width: 1fr;
 }
 
 ChatInput Input:focus {
@@ -85,101 +159,35 @@ ChatInput Input:focus {
     background: transparent;
 }
 
-/* ─── Agent / Chat Panel ──────────────────────────────────────────────────── */
-
-AgentPanel {
-    border: solid #7aa2f7;
-    background: #1e2030;
-}
-
-AgentPanel .panel-title {
-    background: #7aa2f7;
-    color: #1a1b26;
-    text-style: bold;
-    padding: 0 1;
-}
-
-AgentPanel RichLog {
-    background: transparent;
-    padding: 0 1;
-    color: #c0caf5;
-}
-
-/* ─── Todos ───────────────────────────────────────────────────────────────── */
-
-TodosPanel {
-    border: solid #9ece6a;
-    background: #1e2030;
-}
-
-TodosPanel .panel-title {
-    background: #9ece6a;
-    color: #1a1b26;
-    text-style: bold;
-    padding: 0 1;
-    height: 1;
-}
-
-TodosPanel ListView {
-    background: transparent;
-    border: none;
-}
-
-TodoItem {
-    background: transparent;
-    color: #c0caf5;
-    padding: 0 1;
-    height: auto;
-}
-
-TodoItem.highlighted {
-    background: #9ece6a 25%;
-}
-
-/* ─── Events ──────────────────────────────────────────────────────────────── */
-
-EventsPanel {
-    border: solid #e0af68;
-    background: #1e2030;
-}
-
-EventsPanel .panel-title {
-    background: #e0af68;
-    color: #1a1b26;
-    text-style: bold;
-    padding: 0 1;
-    height: 1;
-}
-
-EventsPanel ListView {
-    background: transparent;
-    border: none;
-}
-
-EventItem {
-    background: transparent;
-    color: #c0caf5;
-    padding: 0 1;
-    height: auto;
-}
-
-EventItem.highlighted {
-    background: #e0af68 25%;
-}
-
-/* ─── Notes ───────────────────────────────────────────────────────────────── */
+/* ─── Notes Panel ──────────────────────────────────────────────────────────── */
 
 NotesPanel {
-    border: solid #bb9af7;
+    height: 2fr;
     background: #1e2030;
+    border-bottom: solid #3b4261;
+    border-top: none;
+    border-left: none;
+    border-right: none;
 }
 
 NotesPanel .panel-title {
-    background: #bb9af7;
-    color: #1a1b26;
-    text-style: bold;
-    padding: 0 1;
+    color: #565f89;
+    padding: 0 2;
     height: 1;
+    background: #1e2030;
+}
+
+NotesPanel #notes-filter {
+    height: 1;
+    border: none;
+    background: #292e42;
+    color: #c0caf5;
+    padding: 0 2;
+    display: none;
+}
+
+NotesPanel #notes-filter.visible {
+    display: block;
 }
 
 NotesPanel ListView {
@@ -188,108 +196,97 @@ NotesPanel ListView {
 }
 
 NoteItem {
-    background: transparent;
-    color: #c0caf5;
     padding: 0 1;
-    height: auto;
+    height: 1;
+    background: transparent;
+    color: #565f89;
 }
 
 NoteItem:hover {
-    background: #bb9af7 20%;
-}
-
-/* ─── Vim Panel ───────────────────────────────────────────────────────────── */
-
-VimPanel {
-    border: solid #7aa2f7;
-    background: #1a1b26;
-}
-
-VimPanel .vim-title {
-    background: #7aa2f7;
-    color: #1a1b26;
-    text-style: bold;
-    padding: 0 1;
-    height: 1;
-}
-
-VimPanel #vim-content {
-    padding: 0 1;
+    background: #292e42;
     color: #c0caf5;
-    overflow-y: auto;
 }
 
-/* ─── Tab Bar ─────────────────────────────────────────────────────────────── */
+NoteItem.-highlight {
+    background: #292e42;
+    color: #7aa2f7;
+}
 
-TabBar {
+/* ─── Todos Panel ──────────────────────────────────────────────────────────── */
+
+TodosPanel {
+    height: 1fr;
+    background: #1e2030;
+    border: none;
+}
+
+TodosPanel .panel-title {
+    color: #565f89;
+    padding: 0 2;
     height: 1;
     background: #1e2030;
-    border-top: solid #3b4261;
-    padding: 0 1;
-    layout: horizontal;
-    overflow-x: auto;
-    opacity: 1.0;
-    transition: opacity 200ms linear;
 }
 
-TabBar .tab {
-    padding: 0 2;
-    color: #565f89;
+TodosPanel ListView {
     background: transparent;
+    border: none;
+}
+
+TodoItem {
+    padding: 0 1;
     height: 1;
-}
-
-TabBar .tab.active {
-    background: #7aa2f7;
-    color: #1a1b26;
-    text-style: bold;
-}
-
-TabBar .tab.minimized {
+    background: transparent;
     color: #565f89;
-    text-style: italic;
 }
 
-/* ─── Status Bar ──────────────────────────────────────────────────────────── */
+TodoItem.highlighted {
+    color: #9ece6a;
+}
+
+/* ─── Status Bar ───────────────────────────────────────────────────────────── */
 
 StatusBar {
     height: 1;
-    background: #7aa2f7;
-    color: #1a1b26;
+    background: #1e2030;
+    color: #565f89;
     dock: bottom;
+    border-top: solid #3b4261;
     layout: horizontal;
     padding: 0 1;
 }
 
-StatusBar Static {
+StatusBar .status-left {
     background: transparent;
-    color: #1a1b26;
-    height: 1;
+    color: #565f89;
     width: 1fr;
+    height: 1;
 }
 
-/* ─── Layout Columns ──────────────────────────────────────────────────────── */
-
-#main-col {
-    width: 70%;
-    height: 1fr;
-    layout: vertical;
+StatusBar .status-right {
+    background: transparent;
+    color: #3b4261;
+    width: auto;
+    height: 1;
 }
 
-#dash-col {
-    width: 30%;
-    height: 1fr;
-    layout: vertical;
-    border-left: solid #3b4261;
+/* ─── Scrollbars ───────────────────────────────────────────────────────────── */
+
+* {
+    scrollbar-color: #3b4261;
+    scrollbar-color-hover: #565f89;
+    scrollbar-background: #1a1b26;
+    scrollbar-size: 1 1;
 }
 
-#vim-col {
-    width: 50%;
-    height: 1fr;
-    layout: vertical;
+/* ─── Search Modal ─────────────────────────────────────────────────────────── */
+
+SearchModal {
+    align: center middle;
 }
 
-#vim-row {
-    height: 1fr;
-    layout: horizontal;
+#search-dialog {
+    width: 70;
+    height: 24;
+    border: solid #7aa2f7;
+    background: #1e2030;
 }

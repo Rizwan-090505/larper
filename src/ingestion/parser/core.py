@@ -71,85 +71,106 @@ def parse_markdown(path: Path, raw_content: str
                     i += 1
                     continue
 
-                block_type = 'paragraph'
-                if in_heading:
-                    block_type = 'heading'
-                elif in_list_item:
-                    block_type = 'list'
+                # Split content by lines to handle multiple tasks in same block
+                lines = content.split('\n')
+                
+                for line_content in lines:
+                    line_content = line_content.strip()
+                    if not line_content:
+                        continue
 
-                task_match = TASK_PATTERN.match(content)
-                if task_match:
-                    block_type = 'task'
+                    block_type = 'paragraph'
+                    if in_heading:
+                        block_type = 'heading'
+                    elif in_list_item:
+                        block_type = 'list'
 
-                event_meta = None
-                if block_type not in ('task',):
-                    event_meta = _detect_event(content)
-                    if event_meta:
-                        block_type = 'event'
+                    task_match = TASK_PATTERN.match(line_content)
+                    if task_match:
+                        block_type = 'task'
 
-                if in_heading:
-                    hlevel = _extract_heading_level(current_heading_tag)
-                    while heading_stack and heading_stack[-1][0] >= (hlevel or 99):
-                        heading_stack.pop()
-                    parent_block = heading_stack[-1][1] if heading_stack else None
-                elif in_list_item and list_item_stack:
-                    parent_block = list_item_stack[-1]
-                else:
-                    parent_block = heading_stack[-1][1] if heading_stack else None
+                    event_meta = None
+                    if block_type not in ('task',):
+                        event_meta = _detect_event(line_content)
+                        if event_meta:
+                            block_type = 'event'
 
-                t_map = getattr(tok, 'map', None)
-                position = (t_map[0] if t_map and isinstance(t_map, (list, tuple))
-                            and len(t_map) > 0 else 0)
-
-                level = _extract_heading_level(current_heading_tag) if in_heading else list_depth
-
-                extracted_tags = TAG_PATTERN.findall(content)
-                blocks.append({
-                    'id': block_id,
-                    'block_type': block_type,
-                    'content': content,
-                    'level': level,
-                    'position': position,
-                    'parent_block': parent_block,
-                })
-
-                for tag in extracted_tags:
-                    block_tags.append({
-                        'block_id': block_id,
-                        'tag': tag
-                    })
-
-                if in_heading and current_heading_tag:
-                    hlevel = _extract_heading_level(current_heading_tag)
-                    if hlevel:
-                        heading_stack.append((hlevel, block_id))
-
-                if in_list_item:
-                    list_item_stack.append(block_id)
-
-                if task_match:
-                    tasks.append(_extract_task_meta(
-                        content, task_match.group(2).strip(),
-                        task_match.group(1), block_id,
-                    ))
-
-                for lm in LINK_PATTERN.finditer(content):
-                    link_target = lm.group(1).strip()
-                    if '#' in link_target:
-                        tgt_title, tgt_block = link_target.split('#', 1)
-                        tgt_title = tgt_title.strip()
-                        tgt_block = tgt_block.strip()
+                    if in_heading:
+                        hlevel = _extract_heading_level(current_heading_tag)
+                        while heading_stack and heading_stack[-1][0] >= (hlevel or 99):
+                            heading_stack.pop()
+                        parent_block = heading_stack[-1][1] if heading_stack else None
+                    elif in_list_item and list_item_stack:
+                        parent_block = list_item_stack[-1]
                     else:
-                        tgt_title = link_target
-                        tgt_block = None
-                    references.append({
-                        'source_block_id': block_id,
-                        'target_title': tgt_title,
-                        'target_block': tgt_block,
-                        'reference_type': 'link',
+                        parent_block = heading_stack[-1][1] if heading_stack else None
+
+                    t_map = getattr(tok, 'map', None)
+                    position = (t_map[0] if t_map and isinstance(t_map, (list, tuple))
+                                and len(t_map) > 0 else 0)
+
+                    level = _extract_heading_level(current_heading_tag) if in_heading else list_depth
+
+                    extracted_tags = TAG_PATTERN.findall(line_content)
+                    blocks.append({
+                        'id': block_id,
+                        'block_type': block_type,
+                        'content': line_content,
+                        'level': level,
+                        'position': position,
+                        'parent_block': parent_block,
                     })
 
-                block_id += 1
+                    for tag in extracted_tags:
+                        block_tags.append({
+                            'block_id': block_id,
+                            'tag': tag
+                        })
+
+                    if in_heading and current_heading_tag:
+                        hlevel = _extract_heading_level(current_heading_tag)
+                        if hlevel:
+                            heading_stack.append((hlevel, block_id))
+
+                    if in_list_item:
+                        list_item_stack.append(block_id)
+
+                    if task_match:
+                        # Support markdown checkboxes, TODO prefixes, and explicit labels
+                        if task_match.group('checkbox_text') is not None:
+                            status_group = task_match.group('status_char')
+                            text_group = task_match.group('checkbox_text')
+                        elif task_match.group('todo_text') is not None:
+                            status_group = 'todo'
+                            text_group = task_match.group('todo_text')
+                        else:
+                            status_group = task_match.group('label')
+                            text_group = task_match.group('label_text')
+
+                        tasks.append(_extract_task_meta(
+                            line_content,
+                            text_group.strip() if text_group else line_content,
+                            status_group,
+                            block_id,
+                        ))
+
+                    for lm in LINK_PATTERN.finditer(line_content):
+                        link_target = lm.group(1).strip()
+                        if '#' in link_target:
+                            tgt_title, tgt_block = link_target.split('#', 1)
+                            tgt_title = tgt_title.strip()
+                            tgt_block = tgt_block.strip()
+                        else:
+                            tgt_title = link_target
+                            tgt_block = None
+                        references.append({
+                            'source_block_id': block_id,
+                            'target_title': tgt_title,
+                            'target_block': tgt_block,
+                            'reference_type': 'link',
+                        })
+                    
+                    block_id += 1
 
             i += 1
 

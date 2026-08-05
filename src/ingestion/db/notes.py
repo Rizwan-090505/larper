@@ -42,6 +42,11 @@ async def upsert_note(file_path: str, title: str, note_type: str,
                     print(f"--> [DB] Created note (from modified event): {title} (ID: {note_id})")
 
             await conn.commit()
+        try:
+            from src.ingestion.sync_worker import trigger_sync
+            trigger_sync()
+        except Exception:
+            pass
     except Exception as e:
         print(f"[ERROR] upsert_note failed for {file_path}: {e}")
         note_id = -1

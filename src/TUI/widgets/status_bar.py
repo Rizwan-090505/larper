@@ -10,24 +10,33 @@ class StatusBar(Widget):
     DEFAULT_CSS = """
     StatusBar {
         height: 1;
-        background: $accent;
-        color: $text;
+        background: #1e2030;
+        color: #565f89;
         padding: 0 1;
         dock: bottom;
+        border-top: solid #3b4261;
+        layout: horizontal;
     }
-    StatusBar Static {
+    StatusBar .status-left {
         background: transparent;
-        color: $text;
+        color: #565f89;
         width: 1fr;
+        height: 1;
+    }
+    StatusBar .status-right {
+        background: transparent;
+        color: #3b4261;
+        width: auto;
+        height: 1;
     }
     """
 
-    message: reactive[str] = reactive("Ready")
-    current_file: reactive[str] = reactive("No file open")
+    message: reactive[str] = reactive("ready")
+    current_file: reactive[str] = reactive("")
 
     def compose(self) -> ComposeResult:
-        yield Static(id="status-left")
-        yield Static(id="status-right")
+        yield Static(id="status-left", classes="status-left")
+        yield Static(id="status-right", classes="status-right")
 
     def on_mount(self):
         self.update_display()
@@ -37,10 +46,11 @@ class StatusBar(Widget):
         self.update_display()
 
     def update_display(self):
-        now = datetime.now().strftime("%H:%M:%S")
+        now = datetime.now().strftime("%H:%M")
         left = self.query_one("#status-left", Static)
         right = self.query_one("#status-right", Static)
-        left.update(f" LARPer  |  {self.message}  |  {self.current_file}")
+        file_part = f"  {self.current_file}" if self.current_file else ""
+        left.update(f" {self.message}{file_part}")
         right.update(f"{now} ")
 
     def set_message(self, msg: str, duration: float = 3.0):
@@ -50,5 +60,5 @@ class StatusBar(Widget):
             asyncio.get_event_loop().call_later(duration, self._clear_message)
 
     def _clear_message(self):
-        self.message = "Ready"
+        self.message = "ready"
         self.update_display()

@@ -66,6 +66,7 @@ async def parser_worker() -> None:
     # IMPORT HEAVY NLP MODULES HERE - deferred to avoid startup cost
     # This happens AFTER the TUI has already started rendering
     from src.rag.vector_db import add_blocks_to_vector_db, _get_vector_db
+    import asyncio
     
     logging.info("Parser worker starting - loading NLP models...")
     vector_db = _get_vector_db()
@@ -99,7 +100,7 @@ async def parser_worker() -> None:
                     f"Removed {len(old_block_ids)} stale embeddings for note {note_id}"
                 )
 
-            # --- SQLite transaction: Step 3 ---
+            # --- SQLite transaction: Step 3 (FAST) ---
             # insert_blocks deletes the old rows and inserts fresh ones atomically.
             block_ids = await insert_blocks(note_id, blocks)
 
@@ -118,11 +119,19 @@ async def parser_worker() -> None:
             await insert_block_tags(block_ids, block_tags)
             await insert_tasks(note_id, tasks)
 
+            # INSTANT: Tasks are now in DB, UI can refresh immediately
+            try:
+                from src.core.queue import ui_update_queue
+                await ui_update_queue.put(event)
+            except Exception:
+                pass
+
+            # Generate embeddings in background (SLOW - non-blocking)
             if block_ids and blocks:
                 contents = [b["content"] for b in blocks]
-                await add_blocks_to_vector_db(block_ids, contents)
-                logging.info(
-                    f"Embeddings added for note {note_id} ({len(block_ids)} blocks)"
+                # Run embedding generation without awaiting - let it happen in background
+                asyncio.create_task(
+                    _generate_embeddings_async(block_ids, contents, note_id)
                 )
 
             if references:
@@ -131,7 +140,7 @@ async def parser_worker() -> None:
                     await insert_references(note_id, resolved_refs)
 
             logging.info(
-                f"Processed {event.event_type}: {event.path} (ID: {note_id})"
+                f"Processed {event.event_type}: {event.path} (ID: {note_id}) - tasks available immediately"
             )
 
         except Exception as e:
@@ -140,3 +149,15 @@ async def parser_worker() -> None:
         finally:
             if event is not None:
                 parser_queue.task_done()
+
+
+async def _generate_embeddings_async(block_ids, contents, note_id):
+    """Generate embeddings in background without blocking task ingestion."""
+    try:
+        from src.rag.vector_db import add_blocks_to_vector_db
+        await add_blocks_to_vector_db(block_ids, contents)
+        logging.info(
+            f"Embeddings added for note {note_id} ({len(block_ids)} blocks)"
+        )
+    except Exception as e:
+        logging.error(f"Embedding generation failed for note {note_id}: {e}")

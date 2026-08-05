@@ -1,5 +1,6 @@
 import re
 from typing import Dict, Any, Optional
+from config import settings
 from src.ingestion.parser.patterns import (
     DATE_RANGE, DATE_ISO, DATE_SLASH, DATE_ENGLISH,
     TIME_RANGE, TIME_PATTERN, DUE_DATE_PATTERN, START_DATE_PATTERN,
@@ -39,18 +40,35 @@ def _detect_event(content: str) -> Optional[Dict[str, Any]]:
 
     return meta if meta else None
 
-def _extract_task_meta(content: str, task_text: str, checkbox_val: Optional[str],
+def _extract_task_meta(content: str, task_text: str, status_val: Optional[str],
                        block_id: int) -> Dict[str, Any]:
     """Build a task dict with all extracted metadata."""
     is_done = 0
-    if checkbox_val:
-        v = checkbox_val.lower()
-        if v in ('x', 'v'):
+    if status_val:
+        normalized = status_val.strip().lower()
+        if normalized in {'done', 'x', 'v'}:
             is_done = 1
 
     # Due date
-    due_match = DUE_DATE_PATTERN.search(task_text)
-    due_date = due_match.group(1).replace('/', '-') if due_match else None
+    due_date = None
+    # Check explicitly for @due or due: markers first
+    due_marker = re.search(r'(?:due:|@due)\s*(.+?)(?=\s+(?:@|#|\[)|$)', task_text, re.IGNORECASE)
+    if due_marker:
+        try:
+            from dateparser.search import search_dates
+            from datetime import datetime
+            matches = search_dates(due_marker.group(1), settings={"PREFER_DATES_FROM": "future"})
+            if matches:
+                _, parsed = matches[0]
+                due_date = parsed.date().isoformat()
+        except Exception:
+            pass
+        # Clean marker from text
+        task_text = task_text.replace(due_marker.group(0), "")
+
+    if not due_date:
+        due_match = DUE_DATE_PATTERN.search(task_text)
+        due_date = due_match.group(1).replace('/', '-') if due_match else None
 
     # Start date
     start_match = START_DATE_PATTERN.search(task_text)

@@ -57,7 +57,10 @@ class VimPanel(Widget):
         self.current_file = filename
         self._update_title(f"  ✎  {filename}  [nvim]")
         
-        from state.store import store
+        try:
+            from ..state.store import store
+        except ImportError:
+            from state.store import store
         path = store.get_active_folder() / filename
         
         if path.exists():
@@ -115,7 +118,10 @@ class VimPanel(Widget):
         Returns:
             (success, filepath) — success is True if file was saved with changes
         """
-        from state.store import store
+        try:
+            from ..state.store import store
+        except ImportError:
+            from state.store import store
 
         filepath.parent.mkdir(parents=True, exist_ok=True)
 

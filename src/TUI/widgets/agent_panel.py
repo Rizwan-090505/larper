@@ -1,73 +1,132 @@
+from __future__ import annotations
+
+import re
+from pathlib import Path
 from textual.widget import Widget
 from textual.app import ComposeResult
 from textual.widgets import Static, RichLog
+from textual.message import Message
 from datetime import datetime
-import asyncio
+from rich.text import Text
+from rich.style import Style
+
+
+_NOTE_RE = re.compile(r"(?<![\w/.-])((?:~?/|/)?[\w.-]+(?:/[\w.-]+)*\.md)(?![\w/.-])")
 
 
 class AgentPanel(Widget):
-    """Chat-style panel — user messages + agent replies."""
+    """Primary conversational chat panel."""
+
     can_focus = True
 
     DEFAULT_CSS = """
     AgentPanel {
         height: 1fr;
-        border: solid $primary;
-        background: $surface;
+        background: #1a1b26;
+        border: none;
     }
     AgentPanel .panel-title {
-        background: $primary;
-        color: $text;
-        padding: 0 1;
+        background: #1e2030;
+        color: #565f89;
+        padding: 0 2;
         height: 1;
-        text-style: bold;
+        text-style: none;
     }
     AgentPanel RichLog {
         background: transparent;
         border: none;
         height: 1fr;
-        padding: 0 1;
-        scrollbar-color: $accent;
+        padding: 0 2;
+        scrollbar-color: #3b4261;
+        scrollbar-size: 1 1;
     }
     """
 
+    class NoteLinkClicked(Message):
+        def __init__(self, filepath: str):
+            super().__init__()
+            self.filepath = filepath
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
     def compose(self) -> ComposeResult:
-        yield Static("  AGENT", classes="panel-title")
+        yield Static(
+            "  agent chat  [dim #3b4261]i=focus input  hl=switch panels[/dim #3b4261]",
+            classes="panel-title",
+        )
         yield RichLog(id="output-log", highlight=True, markup=True, wrap=True)
 
     def on_mount(self):
         log = self.query_one("#output-log", RichLog)
-        log.write("")
-        log.write("[bold cyan]  Personal manager ready[/bold cyan]")
-        log.write("[dim]  ─────────────────────────────────────[/dim]")
-        log.write("")
-        log.write("  Type naturally to capture notes, tasks, events, or ask local questions.")
-        log.write("")
-        log.write("  [green]remind me to renew passport tomorrow #admin[/green]")
-        log.write("  [yellow]meeting with Sam Friday at 14:00 #work[/yellow]")
-        log.write("  [cyan]what do I know about the migration plan?[/cyan]")
-        log.write("")
-        log.write("  [dim]Esc[/dim] workspace  [dim]hjkl[/dim] panes  [dim]Shift-H/L[/dim] tabs  [dim]x[/dim] close  [dim]m[/dim] minimize")
-        log.write("  [dim]g n[/dim] new page  [dim]g j[/dim] journal  [dim]Ctrl-I[/dim] input")
-        log.write("")
-        log.write("[dim]  ─────────────────────────────────────[/dim]")
-        log.write("")
 
     def log_user(self, msg: str):
         log = self.query_one("#output-log", RichLog)
         ts = datetime.now().strftime("%H:%M")
-        log.write(f"  [bold white]You[/bold white] [dim]{ts}[/dim]")
-        log.write(f"  [white]  {msg}[/white]")
+        log.write(
+            f"  [bold #c0caf5]you[/bold #c0caf5]  [dim #565f89]{ts}[/dim #565f89]"
+        )
+        log.write(f"  [#c0caf5]{msg}[/#c0caf5]")
         log.write("")
 
     def log_agent(self, msg: str):
         log = self.query_one("#output-log", RichLog)
         ts = datetime.now().strftime("%H:%M")
-        log.write(f"  [bold cyan]Agent[/bold cyan] [dim]{ts}[/dim]")
-        log.write(f"  [cyan]  {msg}[/cyan]")
+        log.write(
+            f"  [bold #7aa2f7]agent[/bold #7aa2f7]  [dim #565f89]{ts}[/dim #565f89]"
+        )
+        rich_text = self._linkify_notes(msg)
+        log.write(rich_text)
         log.write("")
+
+    def log_tool_call(self, tool_name: str, args: dict):
+        log = self.query_one("#output-log", RichLog)
+        args_str = ", ".join(f"{k}={repr(v)}" for k, v in args.items())
+        log.write(f"  [dim #3b4261]  ⚙ {tool_name}({args_str})[/dim #3b4261]")
+
+    def log_tool_calls(self, tool_calls: list[dict]):
+        for tc in tool_calls:
+            self.log_tool_call(tc.get("tool", "?"), tc.get("args", {}))
+
+    def log_status(self, msg: str):
+        log = self.query_one("#output-log", RichLog)
+        log.write(f"  [dim #565f89 italic]  {msg}[/dim #565f89 italic]")
 
     def log_message(self, msg: str):
         log = self.query_one("#output-log", RichLog)
         log.write(f"  {msg}")
         log.write("")
+
+    def _linkify_notes(self, msg: str) -> Text:
+        """
+        Build a Rich Text object where note path references become clickable.
+
+        Textual dispatches clicks by inspecting Rich Style metadata. When the
+        style on a span contains {"@click": "action_name(args)"}, clicking that
+        span runs the named action on the widget's namespace.  We use
+        "app.open_note('<path>')" so the app-level action_open_note handles it.
+        """
+        base_style = Style.parse("#a9b1d6")
+        link_style = Style.parse("#7aa2f7 underline")
+
+        result = Text("  ", style=base_style, end="")
+
+        last_end = 0
+        for m in _NOTE_RE.finditer(msg):
+            start, end = m.span()
+            # Plain text before this match
+            if start > last_end:
+                result.append(msg[last_end:start], style=base_style)
+            # Clickable note link
+            path = m.group(1)
+            display = Path(path).name.replace(".md", "")
+            action = f"app.open_note('{path}')"
+            click_style = link_style + Style.from_meta({"@click": action})
+            result.append(display, style=click_style)
+            last_end = end
+
+        # Remaining plain text
+        if last_end < len(msg):
+            result.append(msg[last_end:], style=base_style)
+
+        return result

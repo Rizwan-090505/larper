@@ -3,13 +3,16 @@ import re
 TASK_PATTERN = re.compile(
     r'''
     ^\s*
-    (?:[*\-]\s+)?
     (?:
-        \[\s*([xXvV\-\~_\!\?]?)\s*\]
+        # Markdown checkbox form: - [x] text or [ ] text
+        (?:[-*]\s+)?\[\s*(?P<status_char>[xXvV~\-]?)\s*\]\s*(?P<checkbox_text>.+)
         |
-        TODO\s*:?\s*
+        # TODO prefix forms: TODO Buy milk or Todo: Buy milk
+        (?:TODO|Todo|todo)\s*[:\-]?\s*(?P<todo_text>.+)
+        |
+        # Explicit todo/done labels
+        (?P<label>todo|done)\s*:\s*(?P<label_text>.+)
     )
-    \s*(.+)
     ''',
     re.IGNORECASE | re.VERBOSE
 )

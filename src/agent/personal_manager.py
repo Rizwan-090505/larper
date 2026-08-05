@@ -1,16 +1,26 @@
-from __future__ import annotations
-
 import json
 import re
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
+from dotenv import load_dotenv
 
 from config import settings
-from src.rag.retrieval import search_and_enrich_blocks
+from src.rag.enhanced_retrieval import search_and_enrich_blocks
+from google import genai
+from google.genai import types
 
+load_dotenv()
 
-Intent = Literal["task", "event", "note", "question"]
+_THINKING_RE = re.compile(r"<thinking>.*?</thinking>", re.DOTALL | re.IGNORECASE)
+
+Intent = Literal["task", "event", "note", "question", "chat"]
+
+GEMINI_MODEL = settings.GEMINI_MODEL if hasattr(settings, "GEMINI_MODEL") else "gemini-2.0-flash"
+
+# How many turns of conversation to keep in memory
+MAX_HISTORY = 20
 
 
 @dataclass
@@ -27,10 +37,376 @@ class AgentResult:
     action: AgentAction
     reply: str
     context: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+
+
+# ─── Tool schemas for Claude tool use ────────────────────────────────────────
+
+TOOLS = [
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="search_notes",
+                description="Search the user's personal knowledge base (notes, journals, tasks). Use this before answering any question about the user's life, work, or plans. This is a hybrid search combining semantic similarity, keywords, and temporal relevance.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "query": types.Schema(type=types.Type.STRING, description="Natural language search query"),
+                        "k": types.Schema(type=types.Type.INTEGER, description="Number of results (default 6)"),
+                    },
+                    required=["query"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="tag_search",
+                description="Search notes by a specific #tag.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "tag": types.Schema(type=types.Type.STRING, description="Tag name (with or without #)"),
+                    },
+                    required=["tag"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="fuzzy_search",
+                description="Fuzzy search across note titles and content. Good for finding specific terms or phrases.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "query": types.Schema(type=types.Type.STRING, description="Search term for fuzzy matching"),
+                        "k": types.Schema(type=types.Type.INTEGER, description="Number of results (default 6)"),
+                    },
+                    required=["query"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="reference_search",
+                description="Search for notes that reference other notes via [[links]].",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "reference": types.Schema(type=types.Type.STRING, description="Reference text or note title"),
+                        "k": types.Schema(type=types.Type.INTEGER, description="Number of results (default 6)"),
+                    },
+                    required=["reference"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="graph_expansion",
+                description="Find notes related to given note IDs through semantic connections.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "note_ids": types.Schema(type=types.Type.ARRAY, description="List of note IDs to expand from", items=types.Schema(type=types.Type.INTEGER)),
+                        "k": types.Schema(type=types.Type.INTEGER, description="Number of related notes to return (default 6)"),
+                    },
+                    required=["note_ids"],
+                ),
+            ),
+        ]
+    )
+]
+
+SYSTEM_PROMPT = """\
+You are LARPer, an autonomous personal knowledge assistant embedded in a terminal note-taking app.
+You help the user manage their notes, tasks, and journals with full access to their knowledge base.
+
+Today is {date}.
+
+# AUTONOMY & TOOL USAGE
+You have access to multiple search tools. Use them proactively:
+1. search_notes: Default hybrid search (semantic + keyword + temporal). Use for general queries.
+2. tag_search: When user mentions a #tag or asks about specific categories.
+3. fuzzy_search: When looking for specific terms, names, or exact phrases.
+4. reference_search: When user mentions [[links]] or asks about connections between notes.
+5. graph_expansion: When you have note IDs and want to find related content.
+
+You are encouraged to use multiple tools in sequence for complex queries. For example:
+- First search_notes for general context
+- Then tag_search for specific categories
+- Then reference_search to explore connections
+
+# RESPONSE GUIDELINES
+- Be concise but thorough. Replies should be helpful and actionable.
+- When you find relevant notes, mention specific filenames (e.g., "journals/2026-08-04.md") so they become clickable.
+- For questions: Answer based on search results, cite sources, and suggest follow-up questions.
+- For tasks/events: Confirm capture briefly and mention any relevant existing notes.
+- For notes: Confirm saved and connect to related existing content.
+
+# SEARCH STRATEGY
+- Always search before answering questions about the user's knowledge.
+- If initial search yields little, try different tools or reformulate the query.
+- Combine results from multiple tools for comprehensive answers.
+- Use graph_expansion to explore connections when you have starting points.
+
+# FILE REFERENCES
+Always write file paths exactly as they appear in search results (e.g., "journals/2026-08-04.md") so the UI can make them clickable links.
+
+IMPORTANT: At the very end of every reply, on its own line, output EXACTLY one of these intent markers:
+[intent:task]    — user wants to capture a to-do / reminder / task
+[intent:event]   — user is logging a meeting, appointment, or event  
+[intent:question]— user is asking a question about their notes / knowledge
+[intent:note]    — user wants to save a note or thought
+[intent:chat]    — general conversation, no specific capture needed
+Do NOT explain the marker. Just append it silently.
+"""
 
 
 class PersonalManagerAgent:
-    """Local-first personal manager agent with optional OpenRouter parsing."""
+    """
+    Conversational agent using Claude (claude-sonnet-4-6) via Anthropic API.
+    Maintains conversation history across turns. Uses tool_use for RAG search.
+    Falls back to local regex parser if API key is missing.
+    """
+
+    def __init__(self):
+        self._history: list[dict] = []  # [{role, content}]
+        self._api_key: str = self._find_api_key()
+        self._search_tools_loaded = False
+
+    def _find_api_key(self) -> str:
+        """Find any available Gemini API key from env/config."""
+        import os
+        return (
+            os.environ.get("GEMINI_API_KEY", "")
+            or getattr(settings, "GEMINI_API_KEY", "")
+            or ""
+        )
+
+    # ── Public entry point ────────────────────────────────────────────────────
+
+    async def run(self, message: str, *, now: datetime | None = None) -> AgentResult:
+        now = now or datetime.now()
+
+        if self._api_key:
+            result = await self._run_gemini(message, now=now)
+            if result:
+                return result
+
+        # Fallback: local parser + RAG
+        return await self._run_local(message, now=now)
+
+    # ── Claude agentic loop ───────────────────────────────────────────────────
+
+    async def _run_gemini(self, message: str, *, now: datetime) -> AgentResult | None:
+        # Add user message to history
+        self._history.append({"role": "user", "parts": [types.Part.from_text(text=message)]})
+        if len(self._history) > MAX_HISTORY:
+            self._history = self._history[-MAX_HISTORY:]
+
+        system = SYSTEM_PROMPT.format(date=now.date().isoformat())
+        tool_calls_log: list[dict] = []
+        final_text = ""
+
+        contents = []
+        for msg in self._history:
+            contents.append(types.Content(role=msg["role"], parts=msg["parts"]))
+
+        client = genai.Client(api_key=self._api_key)
+
+        try:
+            for _iteration in range(5):  # agentic loop
+                config = types.GenerateContentConfig(
+                    system_instruction=system,
+                    tools=TOOLS,
+                    temperature=0.7,
+                )
+                
+                resp = await client.aio.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=contents,
+                    config=config
+                )
+
+                if not resp.candidates:
+                    return None
+
+                candidate = resp.candidates[0]
+                message_parts = candidate.content.parts
+                
+                # Collect text — skip thinking/thought parts
+                text_parts = []
+                for p in message_parts:
+                    # Skip dedicated thought parts (Gemini thinking models)
+                    if getattr(p, "thought", False):
+                        continue
+                    if p.text:
+                        # Strip any <thinking>…</thinking> blocks embedded in text
+                        cleaned = _THINKING_RE.sub("", p.text).strip()
+                        if cleaned:
+                            text_parts.append(cleaned)
+                
+                if text_parts:
+                    final_text = "\n".join(text_parts).strip()
+
+                function_calls = [p.function_call for p in message_parts if p.function_call]
+                
+                if not function_calls:
+                    break
+                    
+                contents.append(candidate.content)
+
+                # Execute tools
+                tool_results_parts = []
+                for fc in function_calls:
+                    tool_name = fc.name
+                    tool_input = type(fc.args).to_dict(fc.args) if hasattr(fc.args, 'to_dict') else dict(fc.args)
+                    if not isinstance(tool_input, dict):
+                        try:
+                            tool_input = dict(fc.args)
+                        except:
+                            tool_input = getattr(fc, "args", {})
+                            
+                    tool_calls_log.append({"tool": tool_name, "args": tool_input})
+
+                    result_data = await self._execute_tool(tool_name, tool_input)
+                    
+                    tool_results_parts.append(
+                        types.Part.from_function_response(
+                            name=tool_name,
+                            response={"result": result_data}
+                        )
+                    )
+
+                contents.append(types.Content(role="user", parts=tool_results_parts))
+
+        except Exception as exc:
+            return None
+
+        if not final_text:
+            return None
+
+        # Extract [intent:xxx] tag that the model appends
+        _INTENT_RE = re.compile(r"\[intent:(task|event|note|question|chat)\]", re.IGNORECASE)
+        ai_intent: Intent | None = None
+        m = _INTENT_RE.search(final_text)
+        if m:
+            ai_intent = m.group(1).lower()  # type: ignore[assignment]
+            # Strip the tag (and any trailing whitespace/newline) from the reply
+            final_text = _INTENT_RE.sub("", final_text).rstrip()
+
+        # Add assistant reply (without the tag) to persistent history
+        self._history.append({"role": "model", "parts": [types.Part.from_text(text=final_text)]})
+
+        action = self._infer_action(message, now)
+        # Override locally-inferred intent with the AI's explicit intent
+        if ai_intent:
+            action.intent = ai_intent
+        return AgentResult(
+            action=action,
+            reply=final_text,
+            tool_calls=tool_calls_log,
+        )
+
+    async def _execute_tool(self, name: str, args: dict) -> Any:
+        try:
+            from src.rag import search_tools
+            
+            if name == "search_notes":
+                results = await search_and_enrich_blocks(
+                    args.get("query", ""), k=int(args.get("k", 6))
+                )
+                results = search_tools.normalize_result_paths(results)
+                return [
+                    {
+                        "title": r.get("title", ""),
+                        "file": r.get("file_path", ""),
+                        "file_path": r.get("file_path", ""),
+                        "excerpt": (r.get("content") or "")[:300],
+                    }
+                    for r in results[:6]
+                ]
+            elif name == "tag_search":
+                results = await search_tools.tag_search(args.get("tag", ""), k=int(args.get("k", 6)))
+                return [
+                    {
+                        "title": r.get("title", ""),
+                        "file": r.get("file_path", ""),
+                        "file_path": r.get("file_path", ""),
+                        "excerpt": (r.get("content") or "")[:300],
+                    }
+                    for r in results[:6]
+                ]
+            elif name == "fuzzy_search":
+                results = await search_tools.fzf_search(args.get("query", ""), k=int(args.get("k", 6)))
+                return [
+                    {
+                        "title": r.get("title", ""),
+                        "file": r.get("file_path", ""),
+                        "file_path": r.get("file_path", ""),
+                        "excerpt": (r.get("content") or "")[:300],
+                    }
+                    for r in results[:6]
+                ]
+            elif name == "reference_search":
+                results = await search_tools.ref_search(args.get("reference", ""), k=int(args.get("k", 6)))
+                return [
+                    {
+                        "title": r.get("title", ""),
+                        "file": r.get("file_path", ""),
+                        "file_path": r.get("file_path", ""),
+                        "target_title": r.get("target_title", ""),
+                        "excerpt": (r.get("content") or "")[:300],
+                    }
+                    for r in results[:6]
+                ]
+            elif name == "graph_expansion":
+                note_ids = args.get("note_ids", [])
+                if isinstance(note_ids, list):
+                    note_id_set = set(note_ids)
+                    results = await search_tools.graph_expand(note_id_set, k=int(args.get("k", 6)))
+                    return [
+                        {
+                            "title": r.get("title", ""),
+                            "file": r.get("file_path", ""),
+                            "file_path": r.get("file_path", ""),
+                            "excerpt": (r.get("content") or "")[:300],
+                        }
+                        for r in results[:6]
+                    ]
+        except Exception as exc:
+            return {"error": str(exc)}
+        return {"error": f"unknown tool: {name}"}
+
+    # ── Local fallback ────────────────────────────────────────────────────────
+
+    async def _run_local(self, message: str, *, now: datetime) -> AgentResult:
+        context = []
+        try:
+            context = await search_and_enrich_blocks(message, k=4)
+            from src.rag import search_tools
+            context = search_tools.normalize_result_paths(context)
+        except Exception:
+            pass
+
+        action = self._infer_action(message, now)
+
+        if action.intent == "question":
+            if context:
+                top = context[0]
+                reply = (
+                    f"Best match from your notes ({top.get('title', '')}): "
+                    f"{(top.get('content') or '')[:200]}"
+                )
+            else:
+                reply = "No matching notes found. (Set GEMINI_API_KEY in .env for full AI responses.)"
+        elif action.intent == "task":
+            due = f" due {action.date}" if action.date else ""
+            reply = f"Task captured: {action.text}{due}"
+        elif action.intent == "event":
+            when = " ".join(p for p in [action.date, action.time] if p)
+            reply = f"Event noted: {action.text}" + (f" at {when}" if when else "")
+        else:
+            reply = "Note saved."
+
+        return AgentResult(action=action, reply=reply, context=context)
+
+    def _parse_locally(self, message: str, now: datetime) -> AgentAction:
+        """Backward-compatible alias used by older tests."""
+        return self._infer_action(message, now)
+
+    # ── Intent inference (used for UI actions, not for the reply) ────────────
 
     _task_re = re.compile(
         r"^(?:add\s+)?(?:todo|task|remind me to|remember to|i need to)\s+(.+)$",
@@ -40,214 +416,69 @@ class PersonalManagerAgent:
         r"^(?:add\s+)?(?:event|meeting|appointment|call)\s+(.+)$",
         re.IGNORECASE,
     )
-    _question_re = re.compile(r"^(?:\?|ask|search|find|what|when|where|who|why|how)\b", re.IGNORECASE)
+    _question_re = re.compile(
+        r"^(?:\?|ask|search|find|what|when|where|who|why|how)\b", re.IGNORECASE
+    )
     _time_re = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", re.IGNORECASE)
 
-    async def run(self, message: str, *, now: datetime | None = None) -> AgentResult:
-        now = now or datetime.now()
-        context = await search_and_enrich_blocks(message, k=6)
-        action = await self._parse(message, now=now, context=context)
-
-        if action.intent == "question":
-            reply = await self._answer(message, context)
-        elif action.intent == "task":
-            due = f" due {action.date}" if action.date else ""
-            reply = f"Task captured: {action.text}{due}"
-        elif action.intent == "event":
-            when = " ".join(part for part in [action.date, action.time] if part)
-            reply = f"Event captured: {action.text}" + (f" at {when}" if when else "")
-        else:
-            reply = "Note saved."
-
-        return AgentResult(action=action, reply=reply, context=context)
-
-    async def _parse(
-        self,
-        message: str,
-        *,
-        now: datetime,
-        context: list[dict[str, Any]],
-    ) -> AgentAction:
-        llm_action = await self._parse_with_openrouter(message, now=now, context=context)
-        if llm_action:
-            return llm_action
-        return self._parse_locally(message, now)
-
-    def _parse_locally(self, message: str, now: datetime) -> AgentAction:
+    def _infer_action(self, message: str, now: datetime) -> AgentAction:
         text = message.strip()
         tags = re.findall(r"(?<![\[`])#([\w-]+)", text)
         date, time = self._extract_datetime(text, now)
 
-        task = self._task_re.match(text)
-        event = self._event_re.match(text)
+        task_m = self._task_re.match(text)
+        event_m = self._event_re.match(text)
 
         if self._question_re.match(text) or text.endswith("?"):
             intent: Intent = "question"
             body = text
-        elif event or (time and any(word in text.lower() for word in ("meet", "call", "appointment", "event"))):
+        elif event_m or (time and any(w in text.lower() for w in ("meet", "call", "appointment", "event"))):
             intent = "event"
-            body = event.group(1).strip() if event else text
-        elif task or any(word in text.lower() for word in ("todo", "remind", "due ", "need to")):
+            body = event_m.group(1).strip() if event_m else text
+        elif task_m or any(w in text.lower() for w in ("todo", "remind", "due ", "need to")):
             intent = "task"
-            body = task.group(1).strip() if task else text
+            body = task_m.group(1).strip() if task_m else text
         else:
-            intent = "note"
+            intent = "chat"
             body = text
 
-        body = self._strip_datetime_noise(body)
-        return AgentAction(intent=intent, text=body, date=date, time=time, tags=tags)
-
-    async def _parse_with_openrouter(
-        self,
-        message: str,
-        *,
-        now: datetime,
-        context: list[dict[str, Any]],
-    ) -> AgentAction | None:
-        api_key = settings.OPENROUTER_API_KEY or settings.API_KEY
-        if not api_key:
-            return None
-
-        try:
-            from langchain_openrouter import ChatOpenRouter
-        except Exception:
-            return None
-
-        model = settings.OPENROUTER_MODEL or settings.MODEL
-        llm = ChatOpenRouter(
-            model=model,
-            api_key=api_key,
-            base_url=settings.OPENROUTER_API_BASE,
-            temperature=0,
-            max_retries=1,
-            app_title="LARPer Personal Manager",
-        )
-
-        context_lines = [
-            f"- {hit.get('title')}: {hit.get('content')}"
-            for hit in context[:5]
-            if hit.get("content")
-        ]
-        prompt = (
-            "Parse this personal-manager input into compact JSON with keys "
-            "intent(task,event,note,question), text, date(YYYY-MM-DD|null), "
-            "time(HH:MM|null), tags(array). Use the current date for relative dates. "
-            f"Current date: {now.date().isoformat()}.\n"
-            f"Known context:\n{chr(10).join(context_lines) or '- none'}\n"
-            f"Input: {message}"
-        )
-
-        try:
-            response = await llm.ainvoke(prompt)
-            data = json.loads(self._json_payload(str(response.content)))
-            intent = data.get("intent")
-            if intent not in {"task", "event", "note", "question"}:
-                return None
-            return AgentAction(
-                intent=intent,
-                text=str(data.get("text") or message).strip(),
-                date=data.get("date") or None,
-                time=data.get("time") or None,
-                tags=[str(tag) for tag in data.get("tags", [])],
-            )
-        except Exception:
-            return None
-
-    async def _answer(self, message: str, context: list[dict[str, Any]]) -> str:
-        if not context:
-            return "I could not find anything relevant in your local notes."
-
-        api_key = settings.OPENROUTER_API_KEY or settings.API_KEY
-        if api_key:
-            try:
-                from langchain_openrouter import ChatOpenRouter
-
-                llm = ChatOpenRouter(
-                    model=settings.OPENROUTER_MODEL or settings.MODEL,
-                    api_key=api_key,
-                    base_url=settings.OPENROUTER_API_BASE,
-                    temperature=0.2,
-                    max_retries=1,
-                    app_title="LARPer Personal Manager",
-                )
-                context_text = "\n".join(
-                    f"[{i}] {hit.get('title')} ({hit.get('file_path')}): {hit.get('content')}"
-                    for i, hit in enumerate(context[:6], 1)
-                )
-                response = await llm.ainvoke(
-                    "Answer from these local notes only. Be concise.\n"
-                    f"Question: {message}\nContext:\n{context_text}"
-                )
-                return str(response.content).strip()
-            except Exception:
-                pass
-
-        top = context[0]
-        return f"Best match: {top.get('content')} ({top.get('title')})"
+        return AgentAction(intent=intent, text=self._clean(body), date=date, time=time, tags=tags)
 
     def _extract_datetime(self, text: str, now: datetime) -> tuple[str | None, str | None]:
         lower = text.lower()
-        explicit_time = self._extract_time(text)
+        t = self._extract_time(text)
         if "tomorrow" in lower:
             from datetime import timedelta
-
-            return (now.date() + timedelta(days=1)).isoformat(), explicit_time
+            return (now.date() + timedelta(days=1)).isoformat(), t
         if "today" in lower or "tonight" in lower:
-            return now.date().isoformat(), explicit_time
+            return now.date().isoformat(), t
         if "yesterday" in lower:
             from datetime import timedelta
-
-            return (now.date() - timedelta(days=1)).isoformat(), explicit_time
-
+            return (now.date() - timedelta(days=1)).isoformat(), t
         try:
             from dateparser.search import search_dates
-
-            matches = search_dates(
-                text,
-                settings={
-                    "RELATIVE_BASE": now,
-                    "PREFER_DATES_FROM": "future",
-                    "RETURN_AS_TIMEZONE_AWARE": False,
-                },
-            )
+            matches = search_dates(text, settings={"RELATIVE_BASE": now, "PREFER_DATES_FROM": "future"})
+            if matches:
+                _, parsed = matches[0]
+                return parsed.date().isoformat(), t or (parsed.strftime("%H:%M") if self._time_re.search(text) else None)
         except Exception:
-            matches = None
-
-        if matches:
-            _, parsed = matches[0]
-            parsed_time = explicit_time or (parsed.strftime("%H:%M") if self._time_re.search(text) else None)
-            return parsed.date().isoformat(), parsed_time
-
-        return None, explicit_time
+            pass
+        return None, t
 
     def _extract_time(self, text: str) -> str | None:
-        match = self._time_re.search(text)
-        if not match:
+        m = self._time_re.search(text)
+        if not m:
             return None
-        hour = int(match.group(1))
-        minute = int(match.group(2) or "0")
-        meridiem = (match.group(3) or "").lower()
-        if meridiem == "pm" and hour < 12:
-            hour += 12
-        if meridiem == "am" and hour == 12:
-            hour = 0
-        if hour > 23 or minute > 59:
-            return None
-        return f"{hour:02d}:{minute:02d}"
+        h, mi = int(m.group(1)), int(m.group(2) or "0")
+        mer = (m.group(3) or "").lower()
+        if mer == "pm" and h < 12:
+            h += 12
+        if mer == "am" and h == 12:
+            h = 0
+        return f"{h:02d}:{mi:02d}" if h <= 23 and mi <= 59 else None
 
-    def _strip_datetime_noise(self, text: str) -> str:
+    def _clean(self, text: str) -> str:
         text = re.sub(r"\b(today|tomorrow|tonight|next week|next month)\b", "", text, flags=re.I)
         text = re.sub(r"\b(?:at|on|by|due)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b", "", text, flags=re.I)
         text = re.sub(r"(?<![\[`])#[\w-]+", "", text)
         return re.sub(r"\s{2,}", " ", text).strip(" ,.-")
-
-    def _json_payload(self, content: str) -> str:
-        content = content.strip()
-        fenced = re.search(r"```(?:json)?\s*(.*?)```", content, re.DOTALL | re.IGNORECASE)
-        if fenced:
-            return fenced.group(1).strip()
-        start = content.find("{")
-        end = content.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            return content[start : end + 1]
-        return content

@@ -73,3 +73,7 @@ async def insert_tasks(note_id: int, tasks: list) -> None:
         await conn.commit()
         print(f"--> [DB] Tasks for note {note_id}: "
               f"inserted={inserted_count}, updated={updated_count}, deleted={deleted_count}")
+        # Deferred import to avoid circular dependency:
+        # db/__init__ → tasks → sync_worker → db/__init__
+        from src.ingestion.sync_worker import trigger_sync
+        trigger_sync()

@@ -12,6 +12,17 @@ OPENROUTER_API_KEY=your_openrouter_key
 OPENROUTER_MODEL=openai/gpt-4.1-mini
 EMBEDDING_MODEL=all-MiniLM-L6-v2
 HF_DIR=/absolute/path/to/model/cache/
+
+# Optional Gemini (Google) settings — client will try Gemini first, then OpenRouter
+GEMINI_API_KEY=
+GEMINI_MODEL=gpt-4o-mini
+GEMINI_API_BASE=
+
+# Search / RAG toggles
+ENABLE_BM25=true
+ENABLE_FZF=true
+ENABLE_GRAPH_EXPANSION=true
+RAG_DEFAULT_K=6
 ```
 
 ## config.py
@@ -59,6 +70,23 @@ Type naturally in the agent input:
 - `what do I know about the migration plan?`
 
 Retrieval is hybrid: embedding similarity, keyword overlap, tag graph matches, temporal matches, and linked/parent/child block graph expansion are combined before the agent answers.
+
+## Keybindings (nvim-style)
+
+- `hjkl`: navigate between panes and lists (`h` left, `j` down, `k` up, `l` right)
+- `gg`: go to top of list
+- `G`: go to bottom of list
+- `gn`: focus notes panel
+- `gj`: open new journal
+- `/`: open search modal
+- `Ctrl+T`: toggle nvim mode
+- `Ctrl+I`: focus input
+- `Esc`: focus workspace
+- `Shift-H` / `Shift-L`: previous/next tab
+- `x`: close tab
+- `m`: minimize tab
+
+Search modal supports fuzzy search and uses the agent's search tools (`bm25`, `fzf`, `tag`, `ref`, `graph`). Configure which tools are enabled via `.env` toggles.
 # LARPER
 
 # LARPer

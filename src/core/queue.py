@@ -2,7 +2,6 @@ import asyncio
 from typing import Final
 from .events import FileEvent, ParseEvent
 import logging
-import asyncio
 
 # Setup logging for queue events (append to same logfile as watchdog)
 logging.basicConfig(
@@ -24,4 +23,5 @@ class LoggingQueue(asyncio.Queue):
 
 event_queue: Final[LoggingQueue] = LoggingQueue()
 parser_queue: Final[LoggingQueue] = LoggingQueue()
+ui_update_queue: Final[LoggingQueue] = LoggingQueue()
 

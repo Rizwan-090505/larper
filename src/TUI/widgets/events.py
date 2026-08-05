@@ -1,8 +1,13 @@
 from textual.widget import Widget
 from textual.app import ComposeResult
 from textual.widgets import Static, ListView, ListItem, Label
-from state.store import store, Item
 import asyncio
+
+# Import store based on how the module is being imported
+try:
+    from ..state.store import store, Item
+except ImportError:
+    from state.store import store, Item
 
 
 class EventItem(ListItem):

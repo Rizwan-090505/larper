@@ -1,4 +1,3 @@
-
 import asyncio
 from pathlib import Path
 import logging
@@ -13,9 +12,8 @@ logging.basicConfig(
     filename="watchdog.log",
     filemode="a",
     format="%(asctime)s %(levelname)s %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
 )
-
 
 
 class LARPEREventHandler(FileSystemEventHandler):
@@ -29,10 +27,8 @@ class LARPEREventHandler(FileSystemEventHandler):
     def _should_track(self, path: Path) -> bool:
         resolved = path.resolve()
         return any(
-            resolved == root or root in resolved.parents
-            for root in self.watch_roots
+            resolved == root or root in resolved.parents for root in self.watch_roots
         )
-
 
     def _enqueue(self, path: Path, event_type: str) -> None:
         if not self._should_track(path):
@@ -45,7 +41,9 @@ class LARPEREventHandler(FileSystemEventHandler):
             event_queue.put(event),
             self.loop,
         )
-        fut.add_done_callback(lambda f: logging.info(f"Queued event: {event_type} - {path}"))
+        fut.add_done_callback(
+            lambda f: logging.info(f"Queued event: {event_type} - {path}")
+        )
 
     def on_created(self, event: FileSystemEvent) -> None:
         if not event.is_directory:

@@ -1,274 +1,94 @@
 from __future__ import annotations
-import re
 import asyncio
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
+
 from textual.app import App, ComposeResult
-from textual.widgets import Static, ListView, ListItem, Label, Input
-from textual.containers import Container, Vertical, VerticalScroll
-from textual.screen import ModalScreen
+from textual.widgets import Input
+from textual.widget import Widget
 from textual.css.query import NoMatches
+from textual.binding import Binding
 from textual import work
 
-from layout import DefaultLayout, VimLayout
-from widgets.chat_input import ChatInput
-from widgets.agent_panel import AgentPanel
-from widgets.todos import TodosPanel
-from widgets.events import EventsPanel
-from widgets.notes import NotesPanel
-from widgets.vim import VimPanel
-from widgets.tabs import TabBar
-from widgets.status_bar import StatusBar
-from state.store import store
+from .layout import MainLayout
+from .widgets.sidebar import SidebarPanel
+from .widgets.chat_input import ChatInput
+from .widgets.agent_panel import AgentPanel
+from .widgets.todos import TodosPanel
+from .widgets.notes import NotesPanel
+from .widgets.status_bar import StatusBar
+from .widgets.search_modal import SearchModal
+
+# Import store based on how the module is being imported
+try:
+    from .state.store import store
+except ImportError:
+    from state.store import store
+
 from src.agent import PersonalManagerAgent, AgentResult
-
-ADD_TASK_RE = re.compile(r"^add task\s+(.+)$", re.IGNORECASE)
-ADD_EVENT_RE = re.compile(r"^add event\s+(.+?)\s+at\s+(\d{1,2}:\d{2})$", re.IGNORECASE)
-
-class FileSelectorScreen(ModalScreen):
-    """Modal screen for selecting or creating files before opening vim."""
-    
-    DEFAULT_CSS = """
-    FileSelectorScreen {
-        align: center middle;
-    }
-    
-    #file-selector-dialog {
-        width: 80;
-        height: 32;
-        border: thick $accent;
-        background: $surface;
-        padding: 0;
-    }
-    
-    #file-selector-dialog .dialog-header {
-        background: $accent;
-        color: $text;
-        height: 3;
-        padding: 1;
-        text-style: bold;
-        dock: top;
-    }
-    
-    #file-selector-dialog .dialog-body {
-        height: 1fr;
-        padding: 1 2;
-    }
-    
-    #file-selector-dialog .file-list-section {
-        height: 1fr;
-        border: solid $primary;
-        margin-bottom: 1;
-    }
-    
-    #file-selector-dialog ListView {
-        height: 100%;
-        background: $surface;
-    }
-    
-    #file-selector-dialog ListItem {
-        padding: 0 1;
-    }
-    
-    #file-selector-dialog ListItem:hover {
-        background: $primary-darken-1;
-    }
-    
-    #file-selector-dialog ListItem.--highlight {
-        background: $primary;
-    }
-    
-    #file-selector-dialog .input-section {
-        height: auto;
-        border: solid $accent;
-        padding: 1;
-        background: $surface-darken-1;
-        margin-bottom: 1;
-    }
-    
-    #file-selector-dialog Input {
-        width: 100%;
-        margin-top: 1;
-    }
-    
-    #file-selector-dialog .dialog-footer {
-        height: 3;
-        background: $surface-darken-1;
-        padding: 1;
-        text-align: center;
-        color: $text-muted;
-        dock: bottom;
-    }
-    """
-
-    BINDINGS = [
-        ("escape", "cancel", "Cancel"),
-        ("ctrl+n", "focus_input", "New File"),
-    ]
-
-    def __init__(self, subdir: str = "pages"):
-        super().__init__()
-        self.subdir = subdir
-        self._files: list[Path] = []
-
-    def compose(self) -> ComposeResult:
-        with Container(id="file-selector-dialog"):
-            yield Static(
-                f"  📁 Select or Create {self.subdir.title()}",
-                classes="dialog-header"
-            )
-            
-            with Vertical(classes="dialog-body"):
-                with VerticalScroll(classes="file-list-section"):
-                    yield ListView(id="file-list")
-                
-                with Container(classes="input-section"):
-                    yield Label("[bold]New file name:[/bold]")
-                    yield Input(
-                        placeholder="my_note.md",
-                        id="filename-input"
-                    )
-            
-            yield Static(
-                "[dim]↑↓[/dim] Navigate  [dim]Enter[/dim] Open/Create  [dim]Ctrl+N[/dim] New  [dim]Esc[/dim] Cancel",
-                classes="dialog-footer"
-            )
-
-    def on_mount(self):
-        self._load_files()
-        self._focus_list()
-
-    def _load_files(self):
-        """Load existing files from the target directory."""
-        target_dir = store.get_active_folder() / self.subdir
-        if not target_dir.exists():
-            target_dir.mkdir(parents=True, exist_ok=True)
-        
-        self._files = sorted(
-            target_dir.glob("*.md"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True
-        )
-        
-        file_list = self.query_one("#file-list", ListView)
-        file_list.clear()
-        
-        if not self._files:
-            file_list.append(
-                ListItem(Label("[dim italic]No existing files. Create one below ↓[/dim italic]"))
-            )
-        else:
-            for filepath in self._files:
-                mtime = filepath.stat().st_mtime
-                from datetime import datetime
-                ts = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
-                label = f"📄 [bold]{filepath.name}[/bold]  [dim]({ts})[/dim]"
-                file_list.append(ListItem(Label(label)))
-
-    def _focus_list(self):
-        """Focus the file list."""
-        try:
-            self.query_one("#file-list", ListView).focus()
-        except:
-            pass
-
-    def action_focus_input(self):
-        """Action to focus the input field."""
-        try:
-            self.query_one("#filename-input", Input).focus()
-        except:
-            pass
-
-    def action_cancel(self):
-        """Action to cancel and close the dialog."""
-        self.dismiss(None)
-
-    def on_list_view_selected(self, event: ListView.Selected):
-        """Handle ListView selection (Enter key or mouse click)."""
-        event.stop()
-        
-        # First check if user has typed something in the input
-        try:
-            input_widget = self.query_one("#filename-input", Input)
-            if input_widget.value.strip():
-                self._create_new_file(input_widget.value.strip())
-                return
-        except:
-            pass
-        
-        # Otherwise, open the selected file from the list
-        try:
-            file_list = self.query_one("#file-list", ListView)
-            index = file_list.index
-            
-            if index is not None and self._files and 0 <= index < len(self._files):
-                selected_file = self._files[index]
-                self.dismiss((selected_file, False))
-            else:
-                self.action_focus_input()
-        except Exception:
-            self.action_focus_input()
-
-    def _create_new_file(self, filename: str):
-        """Create a new file with the given name."""
-        if not filename.endswith(".md"):
-            filename += ".md"
-        filepath = store.get_active_folder() / self.subdir / filename
-        self.dismiss((filepath, True))
-
-    def on_input_submitted(self, event: Input.Submitted):
-        """Handle Enter key in the input field."""
-        if event.input.id == "filename-input":
-            value = event.input.value.strip()
-            if value:
-                self._create_new_file(value)
 
 
 class DevWorkspaceApp(App):
-    """Main TUI application for DevWorkspace."""
-    
+    """Single-screen personal knowledge manager. nvim via suspend()."""
+
     CSS_PATH = "styles/app.css"
-    
+
     BINDINGS = [
-        ("ctrl+q", "quit", "Quit"),
-        ("ctrl+t", "toggle_mode", "Toggle Mode"),
-        ("f3", "new_page", "New Page"),
-        ("f4", "new_journal", "New Journal"),
-        ("ctrl+i", "focus_input", "Focus Input"),
-        ("escape", "focus_workspace", "Workspace"),
-        ("h", "focus_previous_pane", "Pane Left"),
-        ("j", "focus_next_pane", "Pane Down"),
-        ("k", "focus_previous_pane", "Pane Up"),
-        ("l", "focus_next_pane", "Pane Right"),
-        ("shift+h", "previous_tab", "Prev Tab"),
-        ("shift+l", "next_tab", "Next Tab"),
-        ("H", "previous_tab", "Prev Tab"),
-        ("L", "next_tab", "Next Tab"),
-        ("g,n", "new_page", "New Page"),
-        ("g,j", "new_journal", "New Journal"),
-        ("x", "close_tab", "Close Tab"),
-        ("m", "toggle_minimize_tab", "Minimize Tab"),
+        ("q", "quit", "Quit"),
+        ("i", "focus_input", "Input"),
+        Binding("g", "g_prefix", "Go", priority=True, show=False),
+        Binding("n", "g_prefix_notes", "Notes", priority=True, show=False),
+        Binding("b", "g_prefix_sidebar", "Sidebar", priority=True, show=False),
+        Binding("p", "g_prefix_page", "New Page", priority=True, show=False),
+        ("/", "open_search", "Search"),
+        ("escape", "escape_back", "Back"),
+        ("h", "move_left", "Left"),
+        ("j", "move_down", "Down"),
+        ("k", "move_up", "Up"),
+        ("l", "move_right", "Right"),
+        ("G", "go_bottom", "Bottom"),
+        ("x", "close_tab", "Close"),
+        ("m", "minimize", "Minimize"),
+        ("ctrl+t", "toggle_vim_mode", "Toggle Vim"),
     ]
 
     def __init__(self):
         super().__init__()
-        self._vim_mode = False
         self._agent = PersonalManagerAgent()
-        self._active_pane_id = "agent-panel"
+        self._g_prefix = False
+
+    # ── Compose ───────────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
-        # ChatInput lives inside DefaultLayout/VimLayout — NOT here at app level.
-        # Having it here AND inside a layout caused the double input box.
-        yield DefaultLayout(id="default-layout")
+        yield MainLayout(id="main-layout")
         yield StatusBar(id="status-bar")
 
     def on_mount(self):
-        """Called when app is mounted."""
+        # Show API key status on startup
+        key = self._agent._api_key
+        if key:
+            self._log_agent(
+                "ready. I can search your notes and chat — ask me anything, "
+                "add a task, or press gj to open today's journal."
+            )
+            self._set_status("ready — claude online")
+        else:
+            self._log_agent(
+                "[yellow]no GEMINI_API_KEY found.[/yellow] "
+                "Add it to .env for full AI responses. "
+                "Local search still works — try asking about your notes."
+            )
+            self._set_status("ready — local mode (no API key)")
         self._focus_input()
-        self._log_agent("[cyan]Ready. Press F3 for pages, F4 for journals, Ctrl+T for nvim.[/cyan]")
+        
+        # Start file watcher for auto-refresh
+        self.run_worker(self._watch_file_changes(), exclusive=False, name="file-watcher")
+
+    # ── Input ─────────────────────────────────────────────────────────────────
 
     def on_chat_input_submitted(self, event: ChatInput.Submitted):
-        """Handle chat input submission — bubbles up from inside layouts."""
         asyncio.create_task(self._handle_input(event.value))
 
     async def _handle_input(self, raw: str):
@@ -276,28 +96,43 @@ class DevWorkspaceApp(App):
         if not raw:
             return
         self._log_user(raw)
-        self._set_status("Agent is reading local context...")
+        self._set_status("thinking…", duration=0)
         try:
             result = await self._agent.run(raw)
         except Exception as exc:
-            self._log_agent(f"[red]Agent error:[/red] {exc}")
+            self._log_agent(f"[red]error:[/red] {exc}")
             self._focus_input()
             return
-
-        self._apply_agent_result(result)
+        self._apply_result(result)
         self._focus_input()
 
-    def _apply_agent_result(self, result: AgentResult):
+    def _apply_result(self, result: AgentResult):
+        # Show tool traces (dim)
+        try:
+            self.query_one("#agent-panel", AgentPanel).log_tool_calls(result.tool_calls)
+        except Exception:
+            pass
+
         action = result.action
         if action.intent == "task":
-            self._add_task(action.text, due_date=action.date, tags=action.tags)
+            self._add_task(
+                action.text, due_date=action.date, tags=action.tags, reply=result.reply
+            )
         elif action.intent == "event":
-            self._add_event(action.text, time=action.time, date=action.date, tags=action.tags)
-        elif action.intent == "question":
+            self._add_event(
+                action.text,
+                time=action.time,
+                date=action.date,
+                tags=action.tags,
+                reply=result.reply,
+            )
+        elif action.intent in ("question", "chat"):
             self._log_agent(result.reply)
-            self._set_status("Answered from local RAG")
+            self._set_status("done")
         else:
-            self._handle_freeform(action.text, tags=action.tags)
+            self._handle_note(action.text, result.reply, tags=action.tags)
+
+    # ── Note / task helpers ───────────────────────────────────────────────────
 
     def _ensure_capture_file(self) -> str:
         current = store.get_current_file()
@@ -308,40 +143,48 @@ class DevWorkspaceApp(App):
         path = store.get_active_folder() / filename
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(f"# {datetime.now().date().isoformat()}\n\n", encoding="utf-8")
-        try:
-            self.query_one("#notes-panel", NotesPanel).refresh_notes()
-        except NoMatches:
-            pass
+            path.write_text(
+                f"# {datetime.now().date().isoformat()}\n\n", encoding="utf-8"
+            )
+        self._refresh_notes()
         return filename
 
-    def _handle_freeform(self, text: str, tags: list[str] | None = None):
+    def _handle_note(self, text: str, reply: str, tags: list[str] | None = None):
         self._ensure_capture_file()
-        tag_text = " ".join(f"#{tag}" for tag in tags or [] if f"#{tag}" not in text)
+        tag_text = " ".join(f"#{t}" for t in tags or [] if f"#{t}" not in text)
         line = f"- {text}" + (f" {tag_text}" if tag_text else "")
         store.add_note_content(text)
         store.append_line_to_current_file(line)
-        self._update_vim_panel(line)
-        self._log_agent("Note saved.")
-        self._set_status("Note saved")
+        self._log_agent(reply or "saved.")
+        self._set_status("note saved")
+        self._refresh_notes()
 
     def _add_task(
         self,
         text: str,
         due_date: str | None = None,
         tags: list[str] | None = None,
+        reply: str = "",
     ):
         self._ensure_capture_file()
         item = store.add_item(text, date=due_date)
         if item:
-            self._update_todos_panel(item)
-            tag_text = " ".join(f"#{tag}" for tag in tags or [] if f"#{tag}" not in text)
+            try:
+                self.query_one("#todos-panel", TodosPanel).add_todo(item)
+            except NoMatches:
+                pass
+            tag_text = " ".join(f"#{t}" for t in tags or [] if f"#{t}" not in text)
             due_text = f" @due {due_date}" if due_date else ""
             line = f"- [ ] {text}{due_text}" + (f" {tag_text}" if tag_text else "")
-            store.append_line_to_current_file(line)
-            self._update_vim_panel(line)
-            self._log_agent(f"[green]Task added:[/green] {text}")
-            self._set_status(f"Task added: {text}")
+            path = store.append_line_to_current_file(line)
+            self._log_agent(reply or f"Task captured: {text}")
+            self._set_status(f"task: {text[:40]}")
+            if path:
+                asyncio.create_task(self._parse_note_now(path))
+        else:
+            # No capture file yet — still show the reply
+            self._log_agent(reply or f"Task captured: {text}")
+            self._set_status(f"task: {text[:40]}")
 
     def _add_event(
         self,
@@ -349,20 +192,106 @@ class DevWorkspaceApp(App):
         time: str | None = None,
         date: str | None = None,
         tags: list[str] | None = None,
+        reply: str = "",
     ):
         self._ensure_capture_file()
         item = store.add_item(text, time=time, date=date)
         if item:
-            self._update_events_panel(item)
-            tag_text = " ".join(f"#{tag}" for tag in tags or [] if f"#{tag}" not in text)
-            when = " ".join(part for part in [date, time] if part)
-            line = f"- [{when}] {text}" if when else f"- {text}"
-            if tag_text:
-                line = f"{line} {tag_text}"
+            tag_text = " ".join(f"#{t}" for t in tags or [] if f"#{t}" not in text)
+            when = " ".join(p for p in [date, time] if p)
+            line = (f"- [{when}] {text}" if when else f"- {text}") + (
+                f" {tag_text}" if tag_text else ""
+            )
             store.append_line_to_current_file(line)
-            self._update_vim_panel(line)
-            self._log_agent(f"[yellow]Event added:[/yellow] {text}" + (f" at {when}" if when else ""))
-            self._set_status(f"Event added: {text}")
+            self._log_agent(reply or f"Event noted: {text}")
+            self._set_status(f"event: {text[:40]}")
+        else:
+            self._log_agent(reply or f"Event noted: {text}")
+            self._set_status(f"event: {text[:40]}")
+
+    # ── nvim ──────────────────────────────────────────────────────────────────
+
+    @work
+    async def _open_nvim(
+        self, filepath: Path, subdir: str = "pages", is_new: bool = False
+    ):
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        if is_new and not filepath.exists():
+            filepath.write_text(f"# {filepath.stem}\n\n", encoding="utf-8")
+
+        editor = shutil.which("nvim") or shutil.which("vim")
+        if not editor:
+            self._log_agent("[red]nvim not found in PATH[/red]")
+            return
+
+        initial_mtime = filepath.stat().st_mtime if filepath.exists() else 0
+        self._set_status(f"nvim: {filepath.name}", duration=0)
+
+        try:
+            with self.suspend():
+                subprocess.run([editor, str(filepath)])
+        except Exception as exc:
+            self._log_agent(f"[red]editor error:[/red] {exc}")
+            return
+
+        try:
+            new_mtime = filepath.stat().st_mtime
+        except Exception:
+            new_mtime = 0
+
+        if new_mtime > initial_mtime:
+            rel = str(filepath.relative_to(store.get_active_folder()))
+            store.add_note_file(rel)
+            store.set_current_file(rel)
+            self._log_agent(f"saved [#7aa2f7]{filepath.name}[/#7aa2f7].")
+            self._set_status(f"saved {filepath.name}")
+            self._refresh_notes()
+        else:
+            self._set_status("back")
+
+        self._focus_input()
+
+    def _open_path(self, filepath_str: str):
+        try:
+            fp = store.find_note_path(filepath_str)
+        except ValueError as exc:
+            self._log_agent(f"[red]cannot open note:[/red] {exc}")
+            return
+        self._open_nvim(fp, fp.parent.name or "pages", is_new=False)
+
+    # ── Event handlers ────────────────────────────────────────────────────────
+
+    def on_notes_panel_open_in_nvim(self, event: NotesPanel.OpenInNvim):
+        self._open_path(event.filepath)
+
+    def on_notes_panel_file_selected(self, event: NotesPanel.FileSelected):
+        self._open_path(event.filepath)
+
+    def on_notes_panel_edit_requested(self, event: NotesPanel.EditRequested):
+        self._open_path(event.filepath)
+
+    def on_notes_panel_note_deleted(self, event: NotesPanel.NoteDeleted):
+        name = Path(event.filepath).name
+        self._log_agent(f"deleted [dim]{name}[/dim].")
+        self._set_status(f"deleted {name}")
+
+    def on_agent_panel_note_link_clicked(self, event: AgentPanel.NoteLinkClicked):
+        self._open_path(event.filepath)
+
+    def on_sidebar_panel_nav_selected(self, event: SidebarPanel.NavSelected):
+        target = event.target
+        try:
+            np = self.query_one("#notes-panel", NotesPanel)
+            if target == "notes":
+                np.set_mode("pages")
+            elif target == "journals":
+                np.set_mode("journals")
+            else:
+                np.set_mode("hidden")
+        except NoMatches:
+            pass
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _log_user(self, msg: str):
         try:
@@ -376,389 +305,299 @@ class DevWorkspaceApp(App):
         except NoMatches:
             pass
 
-    def _set_status(self, msg: str):
+    def _set_status(self, msg: str, duration: float = 3.0):
         try:
-            self.query_one("#status-bar", StatusBar).set_message(msg)
+            self.query_one("#status-bar", StatusBar).set_message(msg, duration=duration)
         except NoMatches:
             pass
 
     def _focus_input(self):
         try:
-            self._clear_active_pane()
             self.query_one("#chat-input", ChatInput).focus_input()
-            self._active_pane_id = "chat-input"
-            self._set_status("Insert")
         except NoMatches:
             pass
 
-    def _input_is_focused(self) -> bool:
-        focused = self.focused
-        if focused is None:
-            return False
-        if isinstance(focused, Input):
-            return True
-        return focused.id == "chat-input"
-
-    def _pane_ids(self) -> list[str]:
-        if self._vim_mode:
-            return [
-                "vim-panel",
-                "agent-panel",
-                "todos-panel",
-                "events-panel",
-                "notes-panel",
-                "tab-bar",
-                "chat-input",
-            ]
-        return ["agent-panel", "todos-panel", "events-panel", "notes-panel", "chat-input"]
-
-    def _focus_pane(self, pane_id: str):
-        try:
-            self._clear_active_pane()
-            if pane_id == "chat-input":
-                self.query_one("#chat-input", ChatInput).focus_input()
-            else:
-                pane = self.query_one(f"#{pane_id}")
-                pane.focus()
-                pane.add_class("active-pane")
-            self._active_pane_id = pane_id
-            self._set_status(f"Pane: {pane_id.replace('-', ' ')}")
-        except NoMatches:
-            self._focus_first_available_pane()
-
-    def _focus_first_available_pane(self):
-        for pane_id in self._pane_ids():
-            try:
-                self.query_one(f"#{pane_id}")
-                self._focus_pane(pane_id)
-                return
-            except NoMatches:
-                continue
-
-    def _clear_active_pane(self):
-        for pane_id in self._pane_ids():
-            try:
-                self.query_one(f"#{pane_id}").remove_class("active-pane")
-            except NoMatches:
-                pass
-
-    def _move_pane(self, step: int):
-        panes = self._pane_ids()
-        available = []
-        for pane_id in panes:
-            try:
-                self.query_one(f"#{pane_id}")
-                available.append(pane_id)
-            except NoMatches:
-                pass
-        if not available:
-            return
-        if self._active_pane_id not in available:
-            next_id = available[0]
-        else:
-            idx = available.index(self._active_pane_id)
-            next_id = available[(idx + step) % len(available)]
-        self._focus_pane(next_id)
-
-    def _update_todos_panel(self, item):
-        try:
-            self.query_one("#todos-panel", TodosPanel).add_todo(item)
-        except NoMatches:
-            pass
-
-    def _update_events_panel(self, item):
-        try:
-            self.query_one("#events-panel", EventsPanel).add_event(item)
-        except NoMatches:
-            pass
-
-    def _update_vim_panel(self, line: str):
-        try:
-            self.query_one("#vim-panel", VimPanel).append_line(line)
-        except NoMatches:
-            pass
-
-    def on_notes_panel_file_selected(self, event: NotesPanel.FileSelected):
-        self._open_file(event.filepath)
-
-    def on_notes_panel_edit_requested(self, event: NotesPanel.EditRequested):
-        filepath = Path(event.filepath)
-        if not filepath.is_absolute():
-            filepath = store.get_active_folder() / filepath
-        subdir = filepath.parent.name
-        self._log_agent(f"[cyan]Opening nvim for {filepath.name}...[/cyan]")
-        self._do_open_existing_note(filepath, subdir)
-
-    def _open_file(self, filename: str):
-        store.set_current_file(filename)
-        if not self._vim_mode:
-            self._switch_to_vim_mode()
-        else:
-            self._refresh_vim_layout(filename)
-        try:
-            sb = self.query_one("#status-bar", StatusBar)
-            sb.current_file = filename
-            sb.set_message(f"Opened {filename}")
-        except NoMatches:
-            pass
-        self._log_agent(f"[cyan]📄 Opened:[/cyan] [bold]{filename}[/bold]")
-        self._focus_input()
-
-    def _refresh_vim_layout(self, filename: str):
-        try:
-            self.query_one("#vim-panel", VimPanel).load_file(filename)
-            self.query_one("#tab-bar", TabBar).open_file(filename)
-            self.query_one("#todos-panel", TodosPanel).refresh_todos()
-            self.query_one("#events-panel", EventsPanel).refresh_events()
-        except NoMatches:
-            pass
-
-    def _switch_to_vim_mode(self):
-        self._vim_mode = True
-        async def do_switch():
-            try:
-                dl = self.query_one("#default-layout", DefaultLayout)
-                dl.styles.animate("opacity", value=0.0, duration=0.18)
-                await asyncio.sleep(0.2)
-                dl.remove()
-            except NoMatches:
-                pass
-            vim_layout = VimLayout(id="vim-layout")
-            self.mount(vim_layout, before="#status-bar")
-            vim_layout.styles.opacity = 0.0
-            await asyncio.sleep(0.03)
-            vim_layout.styles.animate("opacity", value=1.0, duration=0.22)
-            await asyncio.sleep(0.12)
-            if store.get_current_file():
-                await self._animate_vim_panels(store.get_current_file())
-            self._focus_pane("vim-panel" if store.get_current_file() else "agent-panel")
-        asyncio.create_task(do_switch())
-
-    async def _animate_vim_panels(self, filename: str):
-        try:
-            vim = self.query_one("#vim-panel", VimPanel)
-            vim.styles.opacity = 0.0
-            vim.load_file(filename)
-            vim.styles.animate("opacity", value=1.0, duration=0.28)
-            tabs = self.query_one("#tab-bar", TabBar)
-            tabs.open_file(filename)
-            await asyncio.sleep(0.06)
-            for p_id, cls, method in [
-                ("#todos-panel", TodosPanel, "refresh_todos"),
-                ("#events-panel", EventsPanel, "refresh_events"),
-                ("#notes-panel", NotesPanel, "refresh_notes"),
-            ]:
-                try:
-                    p = self.query_one(p_id, cls)
-                    p.styles.opacity = 0.0
-                    if hasattr(p, method):
-                        getattr(p, method)()
-                    p.styles.animate("opacity", value=1.0, duration=0.25)
-                    await asyncio.sleep(0.06)
-                except NoMatches:
-                    pass
-        except NoMatches:
-            pass
-
-    def _switch_to_default_mode(self):
-        self._vim_mode = False
-        async def do_switch():
-            try:
-                vl = self.query_one("#vim-layout", VimLayout)
-                vl.styles.animate("opacity", value=0.0, duration=0.18)
-                await asyncio.sleep(0.2)
-                vl.remove()
-            except NoMatches:
-                pass
-            dl = DefaultLayout(id="default-layout")
-            self.mount(dl, before="#status-bar")
-            dl.styles.opacity = 0.0
-            await asyncio.sleep(0.03)
-            dl.styles.animate("opacity", value=1.0, duration=0.22)
-            await asyncio.sleep(0.12)
-            for p_id, cls, method in [
-                ("#notes-panel", NotesPanel, "refresh_notes"),
-                ("#todos-panel", TodosPanel, "refresh_todos"),
-                ("#events-panel", EventsPanel, "refresh_events"),
-            ]:
-                try:
-                    p = self.query_one(p_id, cls)
-                    p.styles.opacity = 0.0
-                    if hasattr(p, method):
-                        getattr(p, method)()
-                    p.styles.animate("opacity", value=1.0, duration=0.25)
-                    await asyncio.sleep(0.06)
-                except NoMatches:
-                    pass
-            self._focus_input()
-        asyncio.create_task(do_switch())
-
-    def _open_vim_note(self, subdir: str):
-        """Entry point — logs and kicks off the worker."""
-        self._log_agent(f"[cyan]Opening file selector for {subdir}...[/cyan]")
-        self._do_open_vim_note(subdir)
-
-    @work
-    async def _do_open_existing_note(self, filepath: Path, subdir: str):
-        if not self._vim_mode:
-            self._switch_to_vim_mode()
-            await asyncio.sleep(0.35)
-
-        try:
-            vim = self.query_one("#vim-panel", VimPanel)
-        except NoMatches:
-            self._log_agent("[red]✗ Editor panel not found[/red]")
-            return
-
-        try:
-            with self.suspend():
-                success, saved_path = vim.open_vim_editor(filepath, subdir, is_new=False)
-            if success and saved_path:
-                self.on_vim_panel_note_saved_internal(saved_path, subdir)
-        except Exception as exc:
-            self._log_agent(f"[red]✗ Editor error:[/red] {exc}")
-
-    @work
-    async def _do_open_vim_note(self, subdir: str):
-        """
-        Textual @work worker — required so push_screen_wait is allowed.
-        asyncio.create_task() cannot use push_screen_wait; @work can.
-        """
-        try:
-            result = await self.push_screen_wait(FileSelectorScreen(subdir))
-        except Exception as exc:
-            self._log_agent(f"[red]✗ Error in file selector:[/red] {exc}")
-            return
-
-        if result is None:
-            self._log_agent("[yellow]File selection cancelled[/yellow]")
-            return
-
-        filepath, is_new = result
-        self._log_agent(f"[cyan]Selected: {filepath.name} (new={is_new})[/cyan]")
-
-        if not self._vim_mode:
-            self._log_agent("[cyan]Switching to vim mode...[/cyan]")
-            self._switch_to_vim_mode()
-            await asyncio.sleep(0.35)
-
-        try:
-            vim = self.query_one("#vim-panel", VimPanel)
-        except NoMatches:
-            self._log_agent("[red]✗ Editor panel not found[/red]")
-            return
-
-        self._log_agent(f"[cyan]Launching nvim editor for {filepath.name}...[/cyan]")
-        try:
-            with self.suspend():
-                success, saved_path = vim.open_vim_editor(filepath, subdir, is_new)
-
-            if success and saved_path:
-                self.on_vim_panel_note_saved_internal(saved_path, subdir)
-            else:
-                self._log_agent("[yellow]No changes made[/yellow]")
-        except Exception as exc:
-            self._log_agent(f"[red]✗ Editor error:[/red] {exc}")
-
-    def on_vim_panel_note_saved(self, event: VimPanel.NoteSaved):
-        self.on_vim_panel_note_saved_internal(event.filepath, event.subdir)
-
-    def on_vim_panel_note_saved_internal(self, filepath, subdir):
-        rel = filepath.relative_to(store.get_active_folder())
-        self._log_agent(f"[green]✓ Saved[/green] [bold]{rel}[/bold]")
-        self._set_status(f"Saved {rel}")
+    def _refresh_notes(self):
         try:
             self.query_one("#notes-panel", NotesPanel).refresh_notes()
         except NoMatches:
             pass
 
-    # ── Actions ──────────────────────────────────────────────────────────────
+    async def _watch_file_changes(self):
+        """Background worker that monitors file changes and refreshes UI."""
+        from src.core.queue import ui_update_queue
+        
+        while True:
+            try:
+                # Wait for UI update events after parser ingestion completes
+                event = await asyncio.wait_for(ui_update_queue.get(), timeout=1.0)
+                
+                # Check if it's a markdown file
+                if event.path.suffix == ".md":
+                    # Refresh todos panel to pick up parsed tasks
+                    try:
+                        todos = self.query_one("#todos-panel", TodosPanel)
+                        todos.refresh_todos()
+                    except NoMatches:
+                        pass
+                    
+                    # Refresh notes panel to show updated files
+                    self._refresh_notes()
+                    
+            except asyncio.TimeoutError:
+                # No events in the last second, continue waiting
+                continue
+            except Exception:
+                # Continue on any error
+                await asyncio.sleep(1)
+                continue
 
-    def action_toggle_mode(self):
-        self._switch_to_default_mode() if self._vim_mode else self._switch_to_vim_mode()
-
-    def action_focus_input(self):
-        self._focus_input()
-
-    def action_focus_workspace(self):
-        self._focus_pane("vim-panel" if self._vim_mode else "agent-panel")
-
-    def action_focus_next_pane(self):
-        if self._input_is_focused():
-            return
-        self._move_pane(1)
-
-    def action_focus_previous_pane(self):
-        if self._input_is_focused():
-            return
-        self._move_pane(-1)
-
-    def action_next_tab(self):
-        if self._input_is_focused():
-            return
+    def _refresh_todos(self):
         try:
-            tab_bar = self.query_one("#tab-bar", TabBar)
-            filename = tab_bar.next_file()
+            self.query_one("#todos-panel", TodosPanel).refresh_todos()
         except NoMatches:
-            filename = None
-        if filename:
-            store.set_current_file(filename)
-            self._refresh_vim_layout(filename)
-            self._set_status(f"Tab: {filename}")
+            pass
 
-    def action_previous_tab(self):
-        if self._input_is_focused():
-            return
+    async def _parse_note_now(self, path: Path):
+        """Fast task/index metadata update for UI; vector embeddings stay async."""
         try:
-            tab_bar = self.query_one("#tab-bar", TabBar)
-            filename = tab_bar.previous_file()
-        except NoMatches:
-            filename = None
-        if filename:
-            store.set_current_file(filename)
-            self._refresh_vim_layout(filename)
-            self._set_status(f"Tab: {filename}")
+            from src.ingestion.parser.core import parse_markdown
+            from src.ingestion.db.notes import upsert_note
+            from src.ingestion.db.blocks import insert_blocks
+            from src.ingestion.db.tasks import insert_tasks
+            from src.ingestion.db.tags import insert_block_tags
 
-    def action_close_tab(self):
-        if self._input_is_focused():
-            return
-        try:
-            tab_bar = self.query_one("#tab-bar", TabBar)
-            filename = tab_bar.close_active()
-        except NoMatches:
-            self._set_status("No tab bar")
-            return
-        if filename:
-            store.set_current_file(filename)
-            self._refresh_vim_layout(filename)
-            self._set_status(f"Closed tab, now {filename}")
-        else:
-            store.clear_current_file()
-            self._set_status("Closed last tab")
+            raw_content = path.read_text(encoding="utf-8")
+            note_type = "journal" if "journals" in path.parts else "page"
+            title, blocks, tasks, _references, block_tags = parse_markdown(path, raw_content)
+            note_id = await upsert_note(path, title, note_type, raw_content, "modified")
+            if note_id < 0:
+                return
 
-    def action_toggle_minimize_tab(self):
-        if self._input_is_focused():
-            return
-        try:
-            tab_bar = self.query_one("#tab-bar", TabBar)
-            filename = tab_bar.toggle_minimize_active() or tab_bar.restore_last_minimized()
-        except NoMatches:
-            self._set_status("No tab bar")
-            return
-        if filename:
-            store.set_current_file(filename)
-            self._refresh_vim_layout(filename)
-            self._set_status(f"Tab: {filename}")
-        else:
-            self._set_status("Tabs minimized")
+            block_ids = await insert_blocks(note_id, blocks)
+            local_to_db = {local_idx: db_id for local_idx, db_id in enumerate(block_ids)}
+            for task in tasks:
+                task["block_id"] = local_to_db.get(task["block_id"])
+            for tag in block_tags:
+                tag["block_id"] = local_to_db.get(tag["block_id"])
+
+            await insert_block_tags(block_ids, block_tags)
+            await insert_tasks(note_id, tasks)
+            self._refresh_todos()
+        except Exception as exc:
+            self._log_agent(f"[red]quick parse failed:[/red] {exc}")
+
+    # ── Actions ───────────────────────────────────────────────────────────────
 
     def action_quit(self):
         self.exit()
 
+    def action_focus_input(self):
+        self._focus_input()
+
+    def action_escape_back(self):
+        """Escape unfocuses current widget, allowing app-level navigation."""
+        focused = self.focused
+        
+        if focused:
+            # If something has focus, unfocus it
+            if isinstance(focused, ChatInput):
+                # From chat input, unfocus to allow navigation
+                focused.blur()
+                self._set_status("ready — press i for input, hjkl to navigate", 2.0)
+            elif isinstance(focused, (NotesPanel, TodosPanel, SidebarPanel)):
+                # From a panel, unfocus to allow app navigation
+                focused.blur()
+                self._set_status("ready — press i for input, hjkl to navigate", 2.0)
+            else:
+                # From any other widget, unfocus
+                focused.blur()
+        else:
+            # Nothing focused, focus input
+            self._focus_input()
+
+    def action_focus_sidebar(self):
+        try:
+            self.query_one("#sidebar-panel", SidebarPanel).focus()
+        except NoMatches:
+            pass
+
+    def action_focus_notes(self):
+        try:
+            self.query_one("#notes-panel", NotesPanel).focus()
+        except NoMatches:
+            pass
+
     def action_new_page(self):
-        self._log_agent("[cyan]Opening new page...[/cyan]")
-        self._open_vim_note("pages")
+        from .widgets.input_dialog import FilenameInputDialog
+
+        def _handle(result: str | None):
+            if not result:
+                return
+
+            try:
+                rel = store.normalize_note_path(result, default_dir="pages")
+                rel_path = Path(rel)
+                if not rel_path.parts or rel_path.parts[0] != "pages":
+                    rel = (Path("pages") / rel_path).as_posix()
+                fp = store.get_active_folder() / rel
+            except ValueError as exc:
+                self._log_agent(f"[red]invalid note path:[/red] {exc}")
+                return
+
+            rel_path = Path(rel)
+            subdir = rel_path.parts[0] if len(rel_path.parts) > 1 else "pages"
+
+            self._open_nvim(fp, subdir, is_new=True)
+
+        self.push_screen(
+            FilenameInputDialog(title="Open or create note", default=""), _handle
+        )
 
     def action_new_journal(self):
-        self._log_agent("[cyan]Opening new journal...[/cyan]")
-        self._open_vim_note("journals")
+        filename = f"journals/{datetime.now().date().isoformat()}.md"
+        self._open_nvim(store.get_active_folder() / filename, "journals", is_new=True)
+
+    def action_open_search(self, query: str = ""):
+        def _handle(result):
+            if result and isinstance(result, dict):
+                fp = result.get("filepath", "")
+                if fp:
+                    self._open_path(fp)
+
+        try:
+            self.push_screen(SearchModal(query=query), _handle)
+        except Exception:
+            pass
+
+    def action_move_left(self):
+        """Move focus left (vim-style): notes → sidebar → input."""
+        pane = self._focused_pane()
+        if pane == "right":
+            # From notes, go to sidebar
+            try:
+                self.query_one("#sidebar-panel", SidebarPanel).focus()
+            except NoMatches:
+                pass
+        elif pane == "sidebar":
+            # From sidebar, go to input
+            self._focus_input()
+        else:
+            # From anywhere else, go to sidebar
+            try:
+                self.query_one("#sidebar-panel", SidebarPanel).focus()
+            except NoMatches:
+                pass
+
+    def action_move_right(self):
+        """Move focus right (vim-style): input/sidebar → notes."""
+        pane = self._focused_pane()
+        if pane in ("chat", "sidebar"):
+            # From input or sidebar, go to notes
+            try:
+                self.query_one("#notes-panel", NotesPanel).focus()
+            except NoMatches:
+                pass
+        # If already in notes or other panels, stay there
+
+    def action_move_down(self):
+        """Move focus down (vim-style)."""
+        if self._consume_g_prefix():
+            self.action_new_journal()
+            return
+        # Delegate to focused widget if it has move_down action
+        focused = self.focused
+        if focused and hasattr(focused, "action_move_down"):
+            focused.action_move_down()
+
+    def action_move_up(self):
+        """Move focus up (vim-style)."""
+        # Delegate to focused widget if it has move_up action
+        focused = self.focused
+        if focused and hasattr(focused, "action_move_up"):
+            focused.action_move_up()
+
+    def action_go_top(self):
+        """Go to top of list (vim-style)."""
+        if self._consume_g_prefix():
+            focused = self.focused
+            if focused and hasattr(focused, "action_go_top"):
+                focused.action_go_top()
+            return
+        focused = self.focused
+        if focused and hasattr(focused, "action_go_top"):
+            focused.action_go_top()
+        elif hasattr(focused, "index"):
+            focused.index = 0
+
+    def action_go_bottom(self):
+        """Go to bottom of list (vim-style)."""
+        focused = self.focused
+        if focused and hasattr(focused, "action_go_bottom"):
+            focused.action_go_bottom()
+        elif hasattr(focused, "index") and focused.children:
+            focused.index = len(focused.children) - 1
+
+    def action_close_tab(self):
+        """Close current tab (vim-style)."""
+        # This would be implemented if there are tabs
+        pass
+
+    def action_minimize(self):
+        """Minimize current panel (vim-style)."""
+        # This would hide/show panels
+        pass
+
+    def action_toggle_vim_mode(self):
+        """Toggle vim mode on/off."""
+        # For future implementation
+        pass
+
+    def action_open_note(self, filepath: str):
+        """Handle note link clicks from the agent panel."""
+        self._open_path(filepath)
+
+    def action_g_prefix(self):
+        focused = self.focused
+        if isinstance(focused, Input):
+            return
+        if self._consume_g_prefix():
+            self.action_go_top()
+            return
+        self._g_prefix = True
+        self.set_timer(1.0, self._clear_g_prefix)
+        self._set_status("g…", duration=1.0)
+
+    def action_g_prefix_page(self):
+        if self._consume_g_prefix():
+            self.action_new_page()
+
+    def action_g_prefix_notes(self):
+        if self._consume_g_prefix():
+            self.action_focus_notes()
+
+    def action_g_prefix_sidebar(self):
+        if self._consume_g_prefix():
+            self.action_focus_sidebar()
+
+    def _consume_g_prefix(self) -> bool:
+        if not self._g_prefix:
+            return False
+        self._g_prefix = False
+        return True
+
+    def _clear_g_prefix(self):
+        self._g_prefix = False
+
+    def _focused_pane(self) -> str:
+        node: Widget | None = self.focused
+        while node is not None:
+            node_id = getattr(node, "id", None)
+            if node_id in ("sidebar-panel", "sidebar-col"):
+                return "sidebar"
+            if node_id in ("agent-panel", "chat-input", "cmd-input", "chat-col"):
+                return "chat"
+            if node_id in ("notes-panel", "todos-panel", "notes-list", "todos-list", "right-col"):
+                return "right"
+            node = getattr(node, "parent", None)
+        return ""

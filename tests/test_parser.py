@@ -3,26 +3,26 @@ from src.ingestion.parser.patterns import TASK_PATTERN, DUE_DATE_PATTERN, TAG_PA
 
 def test_task_pattern():
     # Valid done tasks
-    assert TASK_PATTERN.match("- [x] text").group(1) == "x"
-    assert TASK_PATTERN.match("* [X] text").group(1) == "X"
-    assert TASK_PATTERN.match("[v] text").group(1) == "v"
-    assert TASK_PATTERN.match("[V] Some task").group(1) == "V"
-    assert TASK_PATTERN.match("[-] In progress").group(1) == "-"
-    assert TASK_PATTERN.match("[~] cancelled").group(1) == "~"
+    assert TASK_PATTERN.match("- [x] text").group('status_char') == "x"
+    assert TASK_PATTERN.match("* [X] text").group('status_char') == "X"
+    assert TASK_PATTERN.match("[v] text").group('status_char') == "v"
+    assert TASK_PATTERN.match("[V] Some task").group('status_char') == "V"
+    assert TASK_PATTERN.match("[-] In progress").group('status_char') == "-"
+    assert TASK_PATTERN.match("[~] cancelled").group('status_char') == "~"
     
     # Valid open tasks
     m = TASK_PATTERN.match("[ ] Open task")
     assert m is not None
-    assert m.group(1) == "" or m.group(1).isspace()
+    assert m.group('status_char') == "" or m.group('status_char').isspace()
 
     # Weird spacing
-    assert TASK_PATTERN.match("[  ] Open task").group(1) == ""
-    assert TASK_PATTERN.match("[ x ] text").group(1) == "x"
+    assert TASK_PATTERN.match("[  ] Open task").group('status_char') == ""
+    assert TASK_PATTERN.match("[ x ] text").group('status_char') == "x"
 
     # TODOs
-    assert TASK_PATTERN.match("TODO Buy milk").group(2) == "Buy milk"
-    assert TASK_PATTERN.match("Todo: Buy milk").group(2) == "Buy milk"
-    assert TASK_PATTERN.match("TODO : Buy milk").group(2) == "Buy milk"
+    assert TASK_PATTERN.match("TODO Buy milk").group('todo_text') == "Buy milk"
+    assert TASK_PATTERN.match("Todo: Buy milk").group('todo_text') == "Buy milk"
+    assert TASK_PATTERN.match("TODO : Buy milk").group('todo_text') == "Buy milk"
 
     # Negative test
     assert not TASK_PATTERN.match("Just normal text")
