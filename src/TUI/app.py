@@ -438,7 +438,7 @@ class DevWorkspaceApp(App):
             try:
                 rel = store.normalize_note_path(result, default_dir="pages")
                 rel_path = Path(rel)
-                if not rel_path.parts or rel_path.parts[0] != "pages":
+                if not rel_path.parts or rel_path.parts[0] not in ("pages", "journals"):
                     rel = (Path("pages") / rel_path).as_posix()
                 fp = store.get_active_folder() / rel
             except ValueError as exc:

@@ -69,6 +69,17 @@ class Store:
         if rel.suffix.lower() != ".md":
             rel = rel.with_suffix(".md")
 
+        # Normalize journal directory aliases so singular paths like
+        # journal/2026-08-06 and pages/journal/2026-08-06 map to the
+        # canonical journals/ namespace.
+        if rel.parts:
+            first = rel.parts[0].lower()
+            second = rel.parts[1].lower() if len(rel.parts) > 1 else ""
+            if first == "journal":
+                rel = Path("journals", *rel.parts[1:])
+            elif first == "pages" and second in ("journal", "journals"):
+                rel = Path("journals", *rel.parts[2:])
+
         if default_dir == "pages" and (len(rel.parts) == 1 or rel.parts[0] not in ("pages", "journals")):
             rel = Path("pages") / rel
         elif len(rel.parts) == 1 and default_dir:
