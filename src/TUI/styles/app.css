@@ -125,7 +125,8 @@ AgentPanel RichLog {
 }
 
 ChatInput {
-    height: 3;
+    height: auto;
+    max-height: 8;
     background: #1e2030;
     border-top: solid #3b4261;
     border-bottom: none;
@@ -133,28 +134,32 @@ ChatInput {
     border-right: none;
     padding: 0;
     layout: horizontal;
-    align: left middle;
+    align: left top;
 }
 
 ChatInput #prompt-label {
     width: 4;
-    height: 1;
+    height: 3;
     color: #e0af68;
-    padding: 0 1;
+    padding: 1 1 0 1;
     text-style: bold;
-    content-align: left middle;
+    content-align: left top;
 }
 
-ChatInput Input {
+ChatInput TextArea {
     background: transparent;
     border: none;
-    height: 1;
+    height: auto;
+    max-height: 8;
+    min-height: 3;
     color: #c0caf5;
-    padding: 0;
+    padding: 1 0;
     width: 1fr;
+    scrollbar-color: #3b4261;
+    scrollbar-size: 1 1;
 }
 
-ChatInput Input:focus {
+ChatInput TextArea:focus {
     border: none;
     background: transparent;
 }
@@ -234,9 +239,15 @@ TodosPanel ListView {
 
 TodoItem {
     padding: 0 1;
-    height: 1;
+    height: auto;
+    min-height: 1;
     background: transparent;
     color: #565f89;
+}
+
+TodoItem Label {
+    width: 1fr;
+    height: auto;
 }
 
 TodoItem.highlighted {

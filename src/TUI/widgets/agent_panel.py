@@ -55,7 +55,9 @@ class AgentPanel(Widget):
             "  agent chat  [dim #3b4261]i=focus input  hl=switch panels[/dim #3b4261]",
             classes="panel-title",
         )
-        yield RichLog(id="output-log", highlight=True, markup=True, wrap=True)
+        yield RichLog(
+            id="output-log", highlight=True, markup=True, wrap=True, min_width=1
+        )
 
     def on_mount(self):
         log = self.query_one("#output-log", RichLog)

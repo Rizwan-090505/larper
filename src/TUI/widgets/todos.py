@@ -28,15 +28,22 @@ class TodoItem(ListItem):
     DEFAULT_CSS = """
     TodoItem {
         padding: 0 1;
-        height: 1;
+        height: auto;
+        min-height: 1;
         background: transparent;
         color: #565f89;
+    }
+    TodoItem Label {
+        width: 1fr;
+        height: auto;
     }
     TodoItem.highlighted { color: #9ece6a; }
     TodoItem:hover { background: #292e42; }
     """
 
-    def __init__(self, item: Item, task_id: int = 0, raw_text: str = "", is_done: bool = False):
+    def __init__(
+        self, item: Item, task_id: int = 0, raw_text: str = "", is_done: bool = False
+    ):
         super().__init__()
         self._item = item
         self._task_id = task_id
@@ -45,11 +52,12 @@ class TodoItem(ListItem):
         self._label_content = ""
         self._is_overdue = False
         self._check_overdue()
-    
+
     def _check_overdue(self):
         """Check if task is overdue."""
         if self._item.date and not self._is_done:
             from datetime import date
+
             try:
                 due_date = date.fromisoformat(self._item.date)
                 self._is_overdue = due_date < date.today()
@@ -57,16 +65,20 @@ class TodoItem(ListItem):
                 self._is_overdue = False
 
     def compose(self) -> ComposeResult:
-        due = f"  [dim #3b4261]{self._item.date}[/dim #3b4261]" if self._item.date else ""
+        due = (
+            f"  [dim #3b4261]{self._item.date}[/dim #3b4261]" if self._item.date else ""
+        )
         checkbox = " ☒ " if self._is_done else " ☐ "
-        
+
         # Add overdue indicator
         if self._is_overdue:
             overdue_marker = "[bold #f7768e]⚠[/bold #f7768e] "
-            self._label_content = f"{overdue_marker}{checkbox}[#f7768e]{self._item.text}[/#f7768e]{due}"
+            self._label_content = (
+                f"{overdue_marker}{checkbox}[#f7768e]{self._item.text}[/#f7768e]{due}"
+            )
         else:
             self._label_content = f"{checkbox}{self._item.text}{due}"
-        
+
         yield Label(self._label_content)
 
     def on_mount(self):
@@ -74,6 +86,7 @@ class TodoItem(ListItem):
             self.add_class("highlighted")
             await asyncio.sleep(0.8)
             self.remove_class("highlighted")
+
         asyncio.get_event_loop().create_task(highlight())
 
     async def toggle_done(self):
@@ -93,11 +106,12 @@ class TodoItem(ListItem):
                 async with get_connection() as conn:
                     await conn.execute(
                         "UPDATE tasks SET is_done = ?, sync_status = 'pending' WHERE id = ?",
-                        (1 if self._is_done else 0, self._task_id)
+                        (1 if self._is_done else 0, self._task_id),
                     )
                     await conn.commit()
                 try:
                     from src.ingestion.sync_worker import trigger_sync
+
                     trigger_sync()
                 except Exception:
                     pass
@@ -110,14 +124,14 @@ class TodoItem(ListItem):
             filepath = store.find_note_path(self._item.file)
             if not filepath or not filepath.exists():
                 return
-            
+
             original = filepath.read_text(encoding="utf-8")
             lines = original.splitlines(keepends=True)
             target_title = self._item.text.strip()
 
             for idx, line in enumerate(lines):
                 body_line = line.rstrip("\n")
-                
+
                 # Check if this line contains our task
                 if target_title not in body_line:
                     continue
@@ -130,11 +144,11 @@ class TodoItem(ListItem):
                 prefix = match.group(1)  # whitespace/bullet
                 current_status = match.group(2).lower()
                 task_body = match.group(3)
-                
+
                 new_status = "done" if self._is_done else "todo"
                 newline = "\n" if line.endswith("\n") else ""
                 lines[idx] = f"{prefix}{new_status}: {task_body}{newline}"
-                
+
                 filepath.write_text("".join(lines), encoding="utf-8")
                 return
         except Exception as e:
@@ -144,18 +158,22 @@ class TodoItem(ListItem):
         """Update the checkbox display."""
         try:
             label = self.query_one(Label)
-            due = f"  [dim #3b4261]{self._item.date}[/dim #3b4261]" if self._item.date else ""
+            due = (
+                f"  [dim #3b4261]{self._item.date}[/dim #3b4261]"
+                if self._item.date
+                else ""
+            )
             checkbox = " ☒ " if self._is_done else " ☐ "
-            
+
             # Re-check overdue status
             self._check_overdue()
-            
+
             if self._is_overdue:
                 overdue_marker = "[bold #f7768e]⚠[/bold #f7768e] "
                 self._label_content = f"{overdue_marker}{checkbox}[#f7768e]{self._item.text}[/#f7768e]{due}"
             else:
                 self._label_content = f"{checkbox}{self._item.text}{due}"
-            
+
             label.update(self._label_content)
         except Exception:
             pass  # Label not ready yet, will be set in compose()
@@ -198,7 +216,10 @@ class TodosPanel(Widget):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Static("  tasks  [dim #3b4261]jk=nav  gg/G=top/bottom  enter=open  x=toggle  d=delete[/dim #3b4261]", classes="panel-title")
+        yield Static(
+            "  tasks  [dim #3b4261]jk=nav  gg/G=top/bottom  enter=open  x=toggle  d=delete[/dim #3b4261]",
+            classes="panel-title",
+        )
         yield ListView(id="todos-list")
 
     def on_mount(self):
@@ -216,10 +237,12 @@ class TodosPanel(Widget):
         """Get tasks from database with their IDs, including overdue tasks."""
         try:
             from datetime import date
+
             today = date.today().isoformat()
-            
+
             async with get_connection() as conn:
-                cursor = await conn.execute("""
+                cursor = await conn.execute(
+                    """
                     SELECT 
                         t.id, 
                         t.title, 
@@ -239,19 +262,21 @@ class TodosPanel(Widget):
                         priority_group ASC,
                         t.due_date ASC,
                         t.title
-                """, (today,))
+                """,
+                    (today,),
+                )
                 rows = await cursor.fetchall()
-                
+
                 tasks = []
                 for row in rows:
                     task = Item(
-                        id=str(row['id']),
-                        text=row['title'],
-                        file=row['file_path'],
+                        id=str(row["id"]),
+                        text=row["title"],
+                        file=row["file_path"],
                         created_at=datetime.now(),
-                        date=row['due_date']
+                        date=row["due_date"],
                     )
-                    tasks.append((task, row['id'], row['is_done'], row['raw_text']))
+                    tasks.append((task, row["id"], row["is_done"], row["raw_text"]))
                 return tasks
         except Exception as e:
             print(f"Error loading tasks: {e}")
