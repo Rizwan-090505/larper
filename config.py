@@ -1,10 +1,30 @@
-import os
-from typing import Optional
 from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent
 
-class Settings:
+
+class Settings(BaseSettings):
+    """
+    Central app config, loaded from (in order of precedence):
+      1. real environment variables
+      2. the .env file in the project root
+      3. the defaults below
+
+    Field names/defaults are unchanged from the old hand-rolled loader —
+    every existing .env file and every `settings.X` call site keeps working
+    exactly as before. Unknown keys in .env (e.g. leftover/legacy vars) are
+    ignored rather than raising, matching the old `hasattr` guard.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=str(BASE_DIR / ".env"),
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
+
     # ── Anthropic (primary LLM — claude-sonnet-4-6) ───────────────────────────
     ANTHROPIC_API_KEY: str = ""
 
@@ -31,31 +51,5 @@ class Settings:
     ENABLE_GRAPH_EXPANSION: bool = True
     RAG_DEFAULT_K: int = 6
 
-    def __init__(self):
-        # Load from .env file if it exists
-        self._load_env()
-
-    def _load_env(self):
-        env_file = BASE_DIR / ".env"
-        if env_file.exists():
-            with env_file.open('r', encoding='utf-8') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-                    if '=' in line:
-                        key, value = line.split('=', 1)
-                        key = key.strip()
-                        value = value.strip().strip("\"'")
-                        if hasattr(self, key):
-                            # Convert boolean values
-                            if value.lower() == 'true':
-                                value = True
-                            elif value.lower() == 'false':
-                                value = False
-                            # Convert integer values
-                            elif value.isdigit():
-                                value = int(value)
-                            setattr(self, key, value)
 
 settings = Settings()
