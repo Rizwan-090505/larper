@@ -82,9 +82,11 @@ class DevWorkspaceApp(App):
             )
             self._set_status("ready — local mode (no API key)")
         self._focus_input()
-        
+
         # Start file watcher for auto-refresh
-        self.run_worker(self._watch_file_changes(), exclusive=False, name="file-watcher")
+        self.run_worker(
+            self._watch_file_changes(), exclusive=False, name="file-watcher"
+        )
 
     # ── Input ─────────────────────────────────────────────────────────────────
 
@@ -114,6 +116,10 @@ class DevWorkspaceApp(App):
             pass
 
         action = result.action
+
+        # ── IMPORTANT: chat messages typed by the user are NEVER saved as notes.
+        # Only explicit "note" intent (set by the AI, not inferred from raw chat text)
+        # triggers file writing.  question/chat/unknown all just display the reply.
         if action.intent == "task":
             self._add_task(
                 action.text, due_date=action.date, tags=action.tags, reply=result.reply
@@ -126,11 +132,13 @@ class DevWorkspaceApp(App):
                 tags=action.tags,
                 reply=result.reply,
             )
-        elif action.intent in ("question", "chat"):
+        elif action.intent == "note":
+            # Only save when the AI explicitly tagged this as [intent:note]
+            self._handle_note(action.text, result.reply, tags=action.tags)
+        else:
+            # question / chat / anything else → display reply, do NOT write to disk
             self._log_agent(result.reply)
             self._set_status("done")
-        else:
-            self._handle_note(action.text, result.reply, tags=action.tags)
 
     # ── Note / task helpers ───────────────────────────────────────────────────
 
@@ -326,12 +334,12 @@ class DevWorkspaceApp(App):
     async def _watch_file_changes(self):
         """Background worker that monitors file changes and refreshes UI."""
         from src.core.queue import ui_update_queue
-        
+
         while True:
             try:
                 # Wait for UI update events after parser ingestion completes
                 event = await asyncio.wait_for(ui_update_queue.get(), timeout=1.0)
-                
+
                 # Check if it's a markdown file
                 if event.path.suffix == ".md":
                     # Refresh todos panel to pick up parsed tasks
@@ -340,10 +348,10 @@ class DevWorkspaceApp(App):
                         todos.refresh_todos()
                     except NoMatches:
                         pass
-                    
+
                     # Refresh notes panel to show updated files
                     self._refresh_notes()
-                    
+
             except asyncio.TimeoutError:
                 # No events in the last second, continue waiting
                 continue
@@ -369,13 +377,17 @@ class DevWorkspaceApp(App):
 
             raw_content = path.read_text(encoding="utf-8")
             note_type = "journal" if "journals" in path.parts else "page"
-            title, blocks, tasks, _references, block_tags = parse_markdown(path, raw_content)
+            title, blocks, tasks, _references, block_tags = parse_markdown(
+                path, raw_content
+            )
             note_id = await upsert_note(path, title, note_type, raw_content, "modified")
             if note_id < 0:
                 return
 
             block_ids = await insert_blocks(note_id, blocks)
-            local_to_db = {local_idx: db_id for local_idx, db_id in enumerate(block_ids)}
+            local_to_db = {
+                local_idx: db_id for local_idx, db_id in enumerate(block_ids)
+            }
             for task in tasks:
                 task["block_id"] = local_to_db.get(task["block_id"])
             for tag in block_tags:
@@ -398,7 +410,7 @@ class DevWorkspaceApp(App):
     def action_escape_back(self):
         """Escape unfocuses current widget, allowing app-level navigation."""
         focused = self.focused
-        
+
         if focused:
             # If something has focus, unfocus it
             if isinstance(focused, ChatInput):
@@ -597,7 +609,13 @@ class DevWorkspaceApp(App):
                 return "sidebar"
             if node_id in ("agent-panel", "chat-input", "cmd-input", "chat-col"):
                 return "chat"
-            if node_id in ("notes-panel", "todos-panel", "notes-list", "todos-list", "right-col"):
+            if node_id in (
+                "notes-panel",
+                "todos-panel",
+                "notes-list",
+                "todos-list",
+                "right-col",
+            ):
                 return "right"
             node = getattr(node, "parent", None)
         return ""

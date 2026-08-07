@@ -1,5 +1,16 @@
-from typing import List, Dict, Any
+"""
+Parser worker
+=============
+Consumes ParseEvent items from parser_queue, runs the markdown parser,
+writes to SQLite, and generates embeddings (standard + hierarchical) in
+background tasks so the TUI is never blocked.
+"""
+
+from __future__ import annotations
+
+import asyncio
 import logging
+from typing import Any, Dict, List
 
 from src.core.queue import parser_queue
 from src.core.events import ParseEvent
@@ -14,13 +25,22 @@ from src.ingestion.db import (
     get_block_ids_for_note,
 )
 from src.ingestion.parser.core import parse_markdown
-# DEFERRED IMPORT: Heavy NLP modules (sentence-transformers + faiss) are imported
-# inside parser_worker() to avoid blocking startup. This saves 1-2 seconds.
+
+log = logging.getLogger(__name__)
+
+# DEFERRED IMPORTS: Heavy NLP modules (sentence-transformers + faiss) are
+# imported inside parser_worker() to avoid blocking startup.
 
 
-async def _resolve_references(references: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+# ---------------------------------------------------------------------------
+# Reference resolution helper
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_references(
+    references: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
     resolved = []
-
     async with get_connection() as conn:
         cursor = await conn.execute(
             "SELECT id, title FROM notes WHERE deleted_at IS NULL"
@@ -37,15 +57,14 @@ async def _resolve_references(references: List[Dict[str, Any]]) -> List[Dict[str
                 continue
 
             target_block_id = None
-
             if target_block:
                 cursor = await conn.execute(
                     "SELECT id FROM blocks WHERE note_id=? AND content LIKE ?",
                     (target_note_id, f"%{target_block}%"),
                 )
-                block_row = await cursor.fetchone()
-                if block_row:
-                    target_block_id = block_row["id"]
+                row = await cursor.fetchone()
+                if row:
+                    target_block_id = row["id"]
 
             resolved.append(
                 {
@@ -56,32 +75,88 @@ async def _resolve_references(references: List[Dict[str, Any]]) -> List[Dict[str
                     "reference_type": ref.get("reference_type", "link"),
                 }
             )
-
     return resolved
+
+
+# ---------------------------------------------------------------------------
+# Background embedding tasks
+# ---------------------------------------------------------------------------
+
+
+async def _generate_embeddings_async(
+    block_ids: List[int],
+    contents: List[str],
+    note_id: int,
+) -> None:
+    """Standard FAISS embeddings – runs in background after SQLite commit."""
+    try:
+        from src.rag.vector_db import add_blocks_to_vector_db
+
+        await add_blocks_to_vector_db(block_ids, contents)
+        log.info("Embeddings added for note %d (%d blocks)", note_id, len(block_ids))
+    except Exception as exc:
+        log.error("Embedding generation failed for note %d: %s", note_id, exc)
+
+
+async def _generate_hierarchical_embeddings_async(
+    block_ids: List[int],
+    contents: List[str],
+    note_id: int,
+    titles: List[str],
+    file_paths: List[str],
+) -> None:
+    """
+    Multi-hierarchical FAISS embeddings (doc / paragraph / sentence).
+    Runs as a separate background task after the standard embeddings task is
+    scheduled so it never slows down task ingestion.
+    """
+    try:
+        from src.rag.multi_hierarchical import get_hierarchical_db
+
+        hier_db = get_hierarchical_db()
+        note_ids = [note_id] * len(block_ids)
+        await hier_db.add_hierarchical_embeddings(
+            block_ids, contents, note_ids, titles, file_paths
+        )
+        log.info(
+            "Hierarchical embeddings added for note %d (%d blocks)",
+            note_id,
+            len(block_ids),
+        )
+    except Exception as exc:
+        log.error(
+            "Hierarchical embedding generation failed for note %d: %s",
+            note_id,
+            exc,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Main worker loop
+# ---------------------------------------------------------------------------
 
 
 async def parser_worker() -> None:
     logging.basicConfig(level=logging.INFO)
-    
-    # IMPORT HEAVY NLP MODULES HERE - deferred to avoid startup cost
-    # This happens AFTER the TUI has already started rendering
-    from src.rag.vector_db import add_blocks_to_vector_db, _get_vector_db
-    import asyncio
-    
-    logging.info("Parser worker starting - loading NLP models...")
+
+    # Deferred heavy import – happens after TUI has rendered
+    from src.rag.vector_db import _get_vector_db
+
+    log.info("Parser worker starting – loading NLP models…")
     vector_db = _get_vector_db()
-    logging.info("Parser worker ready - NLP models loaded")
+    log.info("Parser worker ready – NLP models loaded")
 
     while True:
-        event = None
-
+        event: ParseEvent | None = None
         try:
-            event: ParseEvent = await parser_queue.get()
+            event = await parser_queue.get()
 
+            # ── Parse ────────────────────────────────────────────────────────
             title, blocks, tasks, references, block_tags = parse_markdown(
                 event.path, event.raw_content
             )
 
+            # ── SQLite upsert ─────────────────────────────────────────────────
             note_id = await upsert_note(
                 event.path,
                 title,
@@ -90,74 +165,79 @@ async def parser_worker() -> None:
                 event.event_type,
             )
 
-            # --- Vector DB sync: Step 1 & 2 ---
-            # Fetch old block_ids BEFORE insert_blocks deletes them from SQLite,
-            # so we can purge their stale embeddings from FAISS.
+            # ── Remove stale embeddings (standard + hierarchical) ─────────────
             old_block_ids = await get_block_ids_for_note(note_id)
             if old_block_ids:
                 vector_db.remove_by_block_ids(old_block_ids)
-                logging.info(
-                    f"Removed {len(old_block_ids)} stale embeddings for note {note_id}"
+                log.info(
+                    "Removed %d stale embeddings for note %d",
+                    len(old_block_ids),
+                    note_id,
                 )
+                # Also purge from hierarchical DB
+                try:
+                    from src.rag.multi_hierarchical import get_hierarchical_db
 
-            # --- SQLite transaction: Step 3 (FAST) ---
-            # insert_blocks deletes the old rows and inserts fresh ones atomically.
+                    get_hierarchical_db().remove_block_ids(old_block_ids)
+                except Exception as exc:
+                    log.debug("hier purge failed: %s", exc)
+
+            # ── Insert blocks / tags / tasks ───────────────────────────────────
             block_ids = await insert_blocks(note_id, blocks)
 
-            # Remap parser-local block indices (0, 1, 2…) → real SQLite rowids
-            local_to_db = {local_idx: db_id for local_idx, db_id in enumerate(block_ids)}
+            local_to_db = {local: db_id for local, db_id in enumerate(block_ids)}
 
             for bt in block_tags:
                 bt["block_id"] = local_to_db.get(bt["block_id"])
-
             for task in tasks:
                 task["block_id"] = local_to_db.get(task["block_id"])
-
             for ref in references:
                 ref["source_block_id"] = local_to_db.get(ref["source_block_id"])
 
             await insert_block_tags(block_ids, block_tags)
             await insert_tasks(note_id, tasks)
 
-            # INSTANT: Tasks are now in DB, UI can refresh immediately
+            # ── Notify UI immediately (tasks available) ───────────────────────
             try:
                 from src.core.queue import ui_update_queue
+
                 await ui_update_queue.put(event)
             except Exception:
                 pass
 
-            # Generate embeddings in background (SLOW - non-blocking)
+            # ── Background: standard + hierarchical embeddings ─────────────────
             if block_ids and blocks:
                 contents = [b["content"] for b in blocks]
-                # Run embedding generation without awaiting - let it happen in background
+                # All blocks share the note title and file path
+                file_path = str(event.path)
+                titles_list = [title] * len(block_ids)
+                paths_list = [file_path] * len(block_ids)
+
                 asyncio.create_task(
                     _generate_embeddings_async(block_ids, contents, note_id)
                 )
+                asyncio.create_task(
+                    _generate_hierarchical_embeddings_async(
+                        block_ids, contents, note_id, titles_list, paths_list
+                    )
+                )
 
+            # ── References ────────────────────────────────────────────────────
             if references:
-                resolved_refs = await _resolve_references(references)
-                if resolved_refs:
-                    await insert_references(note_id, resolved_refs)
+                resolved = await _resolve_references(references)
+                if resolved:
+                    await insert_references(note_id, resolved)
 
-            logging.info(
-                f"Processed {event.event_type}: {event.path} (ID: {note_id}) - tasks available immediately"
+            log.info(
+                "Processed %s: %s (note_id=%d) – tasks available immediately",
+                event.event_type,
+                event.path,
+                note_id,
             )
 
-        except Exception as e:
-            logging.error(f"Parser worker failed: {e}")
+        except Exception as exc:
+            log.error("Parser worker failed: %s", exc)
 
         finally:
             if event is not None:
                 parser_queue.task_done()
-
-
-async def _generate_embeddings_async(block_ids, contents, note_id):
-    """Generate embeddings in background without blocking task ingestion."""
-    try:
-        from src.rag.vector_db import add_blocks_to_vector_db
-        await add_blocks_to_vector_db(block_ids, contents)
-        logging.info(
-            f"Embeddings added for note {note_id} ({len(block_ids)} blocks)"
-        )
-    except Exception as e:
-        logging.error(f"Embedding generation failed for note {note_id}: {e}")

@@ -41,7 +41,7 @@ journals/**
 .model_cache/
 .model_cache/**
 
-
+*.pkl
 *.npy
 *.bin
 *.mapping

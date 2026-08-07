@@ -1,26 +1,72 @@
+"""
+PersonalManagerAgent
+=====================
+Conversational agent backed by Gemini with an agentic RAG loop.
+
+Key behaviours
+──────────────
+1. ALWAYS searches the knowledge base before answering knowledge questions.
+   The agent may call tools multiple times (up to MAX_TOOL_ROUNDS) to gather
+   enough evidence.
+
+2. If search yields nothing relevant the agent says "I don't know / I couldn't
+   find anything" rather than hallucinating an answer.
+
+3. Chat messages typed into the input bar are NEVER saved as notes.
+   Only explicit "note" intents (detected by the AI itself) trigger saving.
+   The TUI enforces this too, but the agent makes it explicit via intent tags.
+
+4. Full multi-tool set exposed to the model:
+     search_notes      – hybrid RAG (embedding + keyword + temporal + graph)
+     tag_search        – search by #tag
+     fuzzy_search      – substring / fuzzy match
+     reference_search  – [[wikilink]] lookup
+     graph_expansion   – expand from block IDs through graph edges
+"""
+
+from __future__ import annotations
+
 import json
+import logging
 import re
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
-from dotenv import load_dotenv
 
-from config import settings
-from src.rag.enhanced_retrieval import search_and_enrich_blocks
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
+from config import settings
+from src.rag.enhanced_retrieval import search_and_enrich_blocks
+
 load_dotenv()
 
+log = logging.getLogger(__name__)
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+
 _THINKING_RE = re.compile(r"<thinking>.*?</thinking>", re.DOTALL | re.IGNORECASE)
+_INTENT_RE = re.compile(r"\[intent:(task|event|note|question|chat)\]", re.IGNORECASE)
+_IDONTKNOW_RE = re.compile(
+    r"\b(i (don'?t|do not|couldn'?t|could not) (know|find|locate|see)|"
+    r"no (relevant|matching|related) (notes?|results?|information|content)|"
+    r"nothing (found|relevant|matching)|"
+    r"couldn'?t find (any|anything|relevant))\b",
+    re.IGNORECASE,
+)
+
+GEMINI_MODEL = getattr(settings, "GEMINI_MODEL", "gemini-2.0-flash")
+MAX_HISTORY = 20  # conversation turns to keep
+MAX_TOOL_ROUNDS = 5  # max agentic search iterations per user message
+MAX_OUTPUT_TOKENS = 4096  # explicit cap so replies can't inherit a tiny API default
+MAX_CONTINUATIONS = 2  # extra rounds to finish a reply cut off by MAX_TOKENS
 
 Intent = Literal["task", "event", "note", "question", "chat"]
 
-GEMINI_MODEL = settings.GEMINI_MODEL if hasattr(settings, "GEMINI_MODEL") else "gemini-2.0-flash"
 
-# How many turns of conversation to keep in memory
-MAX_HISTORY = 20
+# ── Data classes ──────────────────────────────────────────────────────────────
 
 
 @dataclass
@@ -40,66 +86,120 @@ class AgentResult:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
-# ─── Tool schemas for Claude tool use ────────────────────────────────────────
+# ── Tool schemas ──────────────────────────────────────────────────────────────
 
-TOOLS = [
+_TOOLS = [
     types.Tool(
         function_declarations=[
             types.FunctionDeclaration(
                 name="search_notes",
-                description="Search the user's personal knowledge base (notes, journals, tasks). Use this before answering any question about the user's life, work, or plans. This is a hybrid search combining semantic similarity, keywords, and temporal relevance.",
+                description=(
+                    "Search the user's personal knowledge base (notes, journals, tasks). "
+                    "MUST be called before answering any question about the user's life, "
+                    "work, plans, ideas, or anything that might be in their notes. "
+                    "Combines semantic similarity, keywords, temporal relevance, and graph "
+                    "connections. Call this first; use other tools to refine."
+                ),
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
-                        "query": types.Schema(type=types.Type.STRING, description="Natural language search query"),
-                        "k": types.Schema(type=types.Type.INTEGER, description="Number of results (default 6)"),
+                        "query": types.Schema(
+                            type=types.Type.STRING,
+                            description="Natural language search query",
+                        ),
+                        "k": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="Number of results (default 6, max 12)",
+                        ),
                     },
                     required=["query"],
                 ),
             ),
             types.FunctionDeclaration(
                 name="tag_search",
-                description="Search notes by a specific #tag.",
+                description=(
+                    "Search notes by a specific #tag. "
+                    "Use when the user mentions a hashtag or asks about a category/topic "
+                    "they habitually tag."
+                ),
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
-                        "tag": types.Schema(type=types.Type.STRING, description="Tag name (with or without #)"),
+                        "tag": types.Schema(
+                            type=types.Type.STRING,
+                            description="Tag name (with or without #)",
+                        ),
+                        "k": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="Number of results (default 6)",
+                        ),
                     },
                     required=["tag"],
                 ),
             ),
             types.FunctionDeclaration(
                 name="fuzzy_search",
-                description="Fuzzy search across note titles and content. Good for finding specific terms or phrases.",
+                description=(
+                    "Fuzzy / substring search across note titles and content. "
+                    "Good for finding specific names, exact phrases, or file names."
+                ),
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
-                        "query": types.Schema(type=types.Type.STRING, description="Search term for fuzzy matching"),
-                        "k": types.Schema(type=types.Type.INTEGER, description="Number of results (default 6)"),
+                        "query": types.Schema(
+                            type=types.Type.STRING,
+                            description="Search term for fuzzy matching",
+                        ),
+                        "k": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="Number of results (default 6)",
+                        ),
                     },
                     required=["query"],
                 ),
             ),
             types.FunctionDeclaration(
                 name="reference_search",
-                description="Search for notes that reference other notes via [[links]].",
+                description=(
+                    "Search for notes that reference other notes via [[wikilinks]]. "
+                    "Use when the user asks about connections, links, or a specific note "
+                    "title they may have linked from elsewhere."
+                ),
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
-                        "reference": types.Schema(type=types.Type.STRING, description="Reference text or note title"),
-                        "k": types.Schema(type=types.Type.INTEGER, description="Number of results (default 6)"),
+                        "reference": types.Schema(
+                            type=types.Type.STRING,
+                            description="Reference text or note title",
+                        ),
+                        "k": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="Number of results (default 6)",
+                        ),
                     },
                     required=["reference"],
                 ),
             ),
             types.FunctionDeclaration(
                 name="graph_expansion",
-                description="Find notes related to given note IDs through semantic connections.",
+                description=(
+                    "Expand from known block IDs through the knowledge graph "
+                    "(parent/child blocks, [[wikilinks]], shared #tags, file-path proximity). "
+                    "Use after search_notes when you have result IDs and want to find "
+                    "closely related content not caught by the initial search."
+                ),
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
-                        "note_ids": types.Schema(type=types.Type.ARRAY, description="List of note IDs to expand from", items=types.Schema(type=types.Type.INTEGER)),
-                        "k": types.Schema(type=types.Type.INTEGER, description="Number of related notes to return (default 6)"),
+                        "note_ids": types.Schema(
+                            type=types.Type.ARRAY,
+                            description="List of block IDs returned by previous searches",
+                            items=types.Schema(type=types.Type.INTEGER),
+                        ),
+                        "k": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="Number of related notes (default 6)",
+                        ),
                     },
                     required=["note_ids"],
                 ),
@@ -108,274 +208,460 @@ TOOLS = [
     )
 ]
 
-SYSTEM_PROMPT = """\
-You are LARPer, an autonomous personal knowledge assistant embedded in a terminal note-taking app.
-You help the user manage their notes, tasks, and journals with full access to their knowledge base.
+# ── System prompt ─────────────────────────────────────────────────────────────
 
+_SYSTEM_PROMPT = """\
+You are LARPer, an autonomous personal knowledge assistant embedded in a terminal note-taking app.
 Today is {date}.
 
-# AUTONOMY & TOOL USAGE
-You have access to multiple search tools. Use them proactively:
-1. search_notes: Default hybrid search (semantic + keyword + temporal). Use for general queries.
-2. tag_search: When user mentions a #tag or asks about specific categories.
-3. fuzzy_search: When looking for specific terms, names, or exact phrases.
-4. reference_search: When user mentions [[links]] or asks about connections between notes.
-5. graph_expansion: When you have note IDs and want to find related content.
+# CORE RULE — SEARCH BEFORE YOU ANSWER
+You MUST call search_notes (or another search tool) before answering ANY question about:
+  • the user's notes, journals, tasks, or ideas
+  • their projects, meetings, plans, or research
+  • anything they might have written down
 
-You are encouraged to use multiple tools in sequence for complex queries. For example:
-- First search_notes for general context
-- Then tag_search for specific categories
-- Then reference_search to explore connections
+NEVER answer knowledge questions from memory — always check the notes first.
 
-# RESPONSE GUIDELINES
-- Be concise but thorough. Replies should be helpful and actionable.
-- When you find relevant notes, mention specific filenames (e.g., "journals/2026-08-04.md") so they become clickable.
-- For questions: Answer based on search results, cite sources, and suggest follow-up questions.
-- For tasks/events: Confirm capture briefly and mention any relevant existing notes.
-- For notes: Confirm saved and connect to related existing content.
+If after searching you find no relevant information, respond honestly:
+  "I couldn't find anything about that in your notes."
+  or "I don't know — there's nothing relevant in your knowledge base."
+Do NOT make up an answer or guess.
 
-# SEARCH STRATEGY
-- Always search before answering questions about the user's knowledge.
-- If initial search yields little, try different tools or reformulate the query.
-- Combine results from multiple tools for comprehensive answers.
-- Use graph_expansion to explore connections when you have starting points.
+# TOOL STRATEGY
+You may call multiple tools per turn to build a complete picture:
+  1. search_notes        — default hybrid search; start here
+  2. tag_search          — when a #tag is mentioned or relevant
+  3. fuzzy_search        — for specific names, phrases, or file titles
+  4. reference_search    — for [[wikilink]] targets
+  5. graph_expansion     — to explore related content once you have block IDs
 
-# FILE REFERENCES
-Always write file paths exactly as they appear in search results (e.g., "journals/2026-08-04.md") so the UI can make them clickable links.
+Use graph_expansion when the initial results are thin; it expands through
+parent/child blocks, [[links]], shared #tags, and file-path segments.
 
-IMPORTANT: At the very end of every reply, on its own line, output EXACTLY one of these intent markers:
-[intent:task]    — user wants to capture a to-do / reminder / task
-[intent:event]   — user is logging a meeting, appointment, or event  
-[intent:question]— user is asking a question about their notes / knowledge
-[intent:note]    — user wants to save a note or thought
-[intent:chat]    — general conversation, no specific capture needed
-Do NOT explain the marker. Just append it silently.
+# WHAT NOT TO CAPTURE
+Chat conversation, your questions, and general dialogue are NEVER saved as notes.
+Only content the user explicitly asks to save or that is obviously a personal note/task/event
+should produce [intent:note], [intent:task], or [intent:event].
+
+# RESPONSE STYLE
+• Be concise and direct.
+• Always cite sources: mention exact file paths like journals/2026-08-06.md so the UI
+  can make them clickable.
+• For questions: answer from search results, cite files, offer follow-up.
+• For tasks/events: confirm capture briefly.
+
+# INTENT MARKER (required, silent)
+End every reply with EXACTLY one of these on its own line — no explanation:
+  [intent:task]      user wants a to-do / reminder
+  [intent:event]     meeting, appointment, or calendar item
+  [intent:question]  user asked a question (never auto-save)
+  [intent:note]      user explicitly wants to save a note or thought
+  [intent:chat]      general chat — never auto-save
 """
+
+
+# ── Agent ─────────────────────────────────────────────────────────────────────
 
 
 class PersonalManagerAgent:
     """
-    Conversational agent using Claude (claude-sonnet-4-6) via Anthropic API.
-    Maintains conversation history across turns. Uses tool_use for RAG search.
-    Falls back to local regex parser if API key is missing.
+    Conversational agent with agentic RAG loop.
+    • Uses Gemini for the LLM backend.
+    • Falls back to local regex parser if no API key is configured.
+    • Maintains multi-turn history (MAX_HISTORY turns).
     """
 
-    def __init__(self):
-        self._history: list[dict] = []  # [{role, content}]
+    def __init__(self) -> None:
+        self._history: list[dict] = []
         self._api_key: str = self._find_api_key()
-        self._search_tools_loaded = False
 
     def _find_api_key(self) -> str:
-        """Find any available Gemini API key from env/config."""
         import os
+
         return (
             os.environ.get("GEMINI_API_KEY", "")
             or getattr(settings, "GEMINI_API_KEY", "")
             or ""
         )
 
-    # ── Public entry point ────────────────────────────────────────────────────
+    # ── Public ────────────────────────────────────────────────────────────────
 
     async def run(self, message: str, *, now: datetime | None = None) -> AgentResult:
         now = now or datetime.now()
-
         if self._api_key:
             result = await self._run_gemini(message, now=now)
             if result:
                 return result
-
-        # Fallback: local parser + RAG
         return await self._run_local(message, now=now)
 
-    # ── Claude agentic loop ───────────────────────────────────────────────────
+    # ── Gemini agentic loop ───────────────────────────────────────────────────
 
     async def _run_gemini(self, message: str, *, now: datetime) -> AgentResult | None:
-        # Add user message to history
-        self._history.append({"role": "user", "parts": [types.Part.from_text(text=message)]})
+        # Append user message
+        self._history.append(
+            {
+                "role": "user",
+                "parts": [types.Part.from_text(text=message)],
+            }
+        )
         if len(self._history) > MAX_HISTORY:
             self._history = self._history[-MAX_HISTORY:]
 
-        system = SYSTEM_PROMPT.format(date=now.date().isoformat())
-        tool_calls_log: list[dict] = []
-        final_text = ""
+        system = _SYSTEM_PROMPT.format(date=now.date().isoformat())
+        tool_log: list[dict] = []
+        final_text: str = ""
 
-        contents = []
-        for msg in self._history:
-            contents.append(types.Content(role=msg["role"], parts=msg["parts"]))
+        contents = [
+            types.Content(role=m["role"], parts=m["parts"]) for m in self._history
+        ]
 
         client = genai.Client(api_key=self._api_key)
+        exhausted_with_pending_calls = False
 
         try:
-            for _iteration in range(5):  # agentic loop
+            for _round in range(MAX_TOOL_ROUNDS):
                 config = types.GenerateContentConfig(
                     system_instruction=system,
-                    tools=TOOLS,
-                    temperature=0.7,
+                    tools=_TOOLS,
+                    temperature=0.4,  # lower temp → more faithful to retrieved content
+                    max_output_tokens=MAX_OUTPUT_TOKENS,
                 )
-                
                 resp = await client.aio.models.generate_content(
                     model=GEMINI_MODEL,
                     contents=contents,
-                    config=config
+                    config=config,
                 )
 
                 if not resp.candidates:
+                    fr = getattr(resp, "prompt_feedback", None)
+                    log.warning(
+                        "Gemini returned no candidates (round %d): %s", _round, fr
+                    )
                     return None
 
                 candidate = resp.candidates[0]
-                message_parts = candidate.content.parts
-                
-                # Collect text — skip thinking/thought parts
+                parts = candidate.content.parts or []
+
+                # Collect text
                 text_parts = []
-                for p in message_parts:
-                    # Skip dedicated thought parts (Gemini thinking models)
+                for p in parts:
                     if getattr(p, "thought", False):
                         continue
                     if p.text:
-                        # Strip any <thinking>…</thinking> blocks embedded in text
                         cleaned = _THINKING_RE.sub("", p.text).strip()
                         if cleaned:
                             text_parts.append(cleaned)
-                
                 if text_parts:
                     final_text = "\n".join(text_parts).strip()
 
-                function_calls = [p.function_call for p in message_parts if p.function_call]
-                
-                if not function_calls:
+                finish_reason = str(getattr(candidate, "finish_reason", "") or "")
+                if "MAX_TOKENS" in finish_reason.upper():
+                    log.warning(
+                        "Gemini reply truncated by MAX_TOKENS (round %d, %d chars so "
+                        "far) — requesting continuation.",
+                        _round,
+                        len(final_text),
+                    )
+                    final_text = await self._continue_truncated_reply(
+                        client, system, contents, candidate, final_text
+                    )
+
+                fn_calls = [p.function_call for p in parts if p.function_call]
+
+                if not fn_calls:
+                    # No more tool calls — done
+                    exhausted_with_pending_calls = False
                     break
-                    
+
+                # Append model turn with function calls
                 contents.append(candidate.content)
 
                 # Execute tools
-                tool_results_parts = []
-                for fc in function_calls:
-                    tool_name = fc.name
-                    tool_input = type(fc.args).to_dict(fc.args) if hasattr(fc.args, 'to_dict') else dict(fc.args)
-                    if not isinstance(tool_input, dict):
-                        try:
-                            tool_input = dict(fc.args)
-                        except:
-                            tool_input = getattr(fc, "args", {})
-                            
-                    tool_calls_log.append({"tool": tool_name, "args": tool_input})
+                tool_result_parts = []
+                for fc in fn_calls:
+                    name = fc.name
+                    args = self._coerce_args(fc.args)
+                    tool_log.append({"tool": name, "args": args})
 
-                    result_data = await self._execute_tool(tool_name, tool_input)
-                    
-                    tool_results_parts.append(
+                    result_data = await self._execute_tool(name, args)
+                    tool_result_parts.append(
                         types.Part.from_function_response(
-                            name=tool_name,
-                            response={"result": result_data}
+                            name=name,
+                            response={"result": result_data},
                         )
                     )
 
-                contents.append(types.Content(role="user", parts=tool_results_parts))
+                contents.append(types.Content(role="user", parts=tool_result_parts))
+                # If this was the last permitted round, we exit the for-loop
+                # next iteration check without a break — remember that so we
+                # can force a proper answer below instead of silently bailing.
+                exhausted_with_pending_calls = True
 
-        except Exception as exc:
+            if exhausted_with_pending_calls or not final_text:
+                # The model kept calling tools (or never emitted text) until
+                # we ran out of rounds. Ask it — with tools disabled — to
+                # synthesize a final answer from everything gathered so far
+                # instead of throwing the whole (successful) turn away.
+                log.warning(
+                    "Gemini agent hit MAX_TOOL_ROUNDS=%d without a final answer "
+                    "(tools called: %d) — forcing a text-only synthesis round.",
+                    MAX_TOOL_ROUNDS,
+                    len(tool_log),
+                )
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[
+                            types.Part.from_text(
+                                text=(
+                                    "Stop calling tools now. Using only the results "
+                                    "already gathered above, give your final answer "
+                                    "to my original question, citing file paths. "
+                                    "End with the required [intent:...] marker."
+                                )
+                            )
+                        ],
+                    )
+                )
+                final_config = types.GenerateContentConfig(
+                    system_instruction=system,
+                    temperature=0.4,
+                    max_output_tokens=MAX_OUTPUT_TOKENS,
+                )
+                resp = await client.aio.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=contents,
+                    config=final_config,
+                )
+                if resp.candidates:
+                    fin_candidate = resp.candidates[0]
+                    parts = fin_candidate.content.parts or []
+                    text_parts = []
+                    for p in parts:
+                        if getattr(p, "thought", False):
+                            continue
+                        if p.text:
+                            cleaned = _THINKING_RE.sub("", p.text).strip()
+                            if cleaned:
+                                text_parts.append(cleaned)
+                    if text_parts:
+                        final_text = "\n".join(text_parts).strip()
+                    if (
+                        "MAX_TOKENS"
+                        in str(
+                            getattr(fin_candidate, "finish_reason", "") or ""
+                        ).upper()
+                    ):
+                        log.warning(
+                            "Forced-synthesis reply also truncated by MAX_TOKENS — "
+                            "requesting continuation."
+                        )
+                        final_text = await self._continue_truncated_reply(
+                            client, system, contents, fin_candidate, final_text
+                        )
+
+        except Exception:
+            log.exception("Gemini call failed")
             return None
 
         if not final_text:
+            log.warning(
+                "Gemini agent produced no final text after %d tool calls — "
+                "falling back to local parser.",
+                len(tool_log),
+            )
             return None
 
-        # Extract [intent:xxx] tag that the model appends
-        _INTENT_RE = re.compile(r"\[intent:(task|event|note|question|chat)\]", re.IGNORECASE)
-        ai_intent: Intent | None = None
+        # Extract + strip intent marker
+        intent: Intent | None = None
         m = _INTENT_RE.search(final_text)
         if m:
-            ai_intent = m.group(1).lower()  # type: ignore[assignment]
-            # Strip the tag (and any trailing whitespace/newline) from the reply
+            intent = m.group(1).lower()  # type: ignore[assignment]
             final_text = _INTENT_RE.sub("", final_text).rstrip()
 
-        # Add assistant reply (without the tag) to persistent history
-        self._history.append({"role": "model", "parts": [types.Part.from_text(text=final_text)]})
+        # Persist assistant reply
+        self._history.append(
+            {
+                "role": "model",
+                "parts": [types.Part.from_text(text=final_text)],
+            }
+        )
 
         action = self._infer_action(message, now)
-        # Override locally-inferred intent with the AI's explicit intent
-        if ai_intent:
-            action.intent = ai_intent
+        if intent:
+            action.intent = intent
+
+        # Safety: chat / question must never trigger note-saving
+        if action.intent in ("chat", "question"):
+            # leave intent as-is; TUI will not save
+            pass
+
         return AgentResult(
             action=action,
             reply=final_text,
-            tool_calls=tool_calls_log,
+            tool_calls=tool_log,
         )
+
+    # ── Truncation recovery ───────────────────────────────────────────────────
+
+    async def _continue_truncated_reply(
+        self,
+        client: "genai.Client",
+        system: str,
+        contents: list,
+        candidate,
+        partial_text: str,
+    ) -> str:
+        """
+        If Gemini stops mid-reply because it hit max_output_tokens, ask it to
+        keep going from where it left off (instead of silently showing a
+        cut-off answer), and stitch the pieces together.
+        """
+        accumulated = partial_text
+        convo = list(contents) + [candidate.content]
+
+        for _ in range(MAX_CONTINUATIONS):
+            convo.append(
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(
+                            text=(
+                                "Your previous reply was cut off before it finished. "
+                                "Continue exactly where you left off — do not repeat "
+                                "anything already said, do not restart the answer. "
+                                "End with the required [intent:...] marker once complete."
+                            )
+                        )
+                    ],
+                )
+            )
+            try:
+                resp = await client.aio.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=convo,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system,
+                        temperature=0.4,
+                        max_output_tokens=MAX_OUTPUT_TOKENS,
+                    ),
+                )
+            except Exception:
+                log.exception("Continuation call failed")
+                break
+
+            if not resp.candidates:
+                break
+
+            cont_candidate = resp.candidates[0]
+            parts = cont_candidate.content.parts or []
+            chunk_parts = []
+            for p in parts:
+                if getattr(p, "thought", False):
+                    continue
+                if p.text:
+                    cleaned = _THINKING_RE.sub("", p.text).strip()
+                    if cleaned:
+                        chunk_parts.append(cleaned)
+            chunk = "\n".join(chunk_parts).strip()
+            if chunk:
+                accumulated = f"{accumulated}\n{chunk}"
+
+            convo.append(cont_candidate.content)
+
+            if (
+                "MAX_TOKENS"
+                not in str(getattr(cont_candidate, "finish_reason", "") or "").upper()
+            ):
+                break
+            log.warning("Continuation still truncated by MAX_TOKENS — trying again.")
+
+        return accumulated
+
+    # ── Tool execution ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _coerce_args(raw) -> dict:
+        """Normalise Gemini's args object to a plain dict."""
+        if isinstance(raw, dict):
+            return raw
+        try:
+            return dict(raw)
+        except Exception:
+            return {}
 
     async def _execute_tool(self, name: str, args: dict) -> Any:
         try:
             from src.rag import search_tools
-            
+
             if name == "search_notes":
                 results = await search_and_enrich_blocks(
                     args.get("query", ""), k=int(args.get("k", 6))
                 )
                 results = search_tools.normalize_result_paths(results)
-                return [
-                    {
-                        "title": r.get("title", ""),
-                        "file": r.get("file_path", ""),
-                        "file_path": r.get("file_path", ""),
-                        "excerpt": (r.get("content") or "")[:300],
-                    }
-                    for r in results[:6]
-                ]
+                return self._format_results(results)
+
             elif name == "tag_search":
-                results = await search_tools.tag_search(args.get("tag", ""), k=int(args.get("k", 6)))
-                return [
-                    {
-                        "title": r.get("title", ""),
-                        "file": r.get("file_path", ""),
-                        "file_path": r.get("file_path", ""),
-                        "excerpt": (r.get("content") or "")[:300],
-                    }
-                    for r in results[:6]
-                ]
+                results = await search_tools.tag_search(
+                    args.get("tag", ""), k=int(args.get("k", 6))
+                )
+                return self._format_results(results)
+
             elif name == "fuzzy_search":
-                results = await search_tools.fzf_search(args.get("query", ""), k=int(args.get("k", 6)))
-                return [
-                    {
-                        "title": r.get("title", ""),
-                        "file": r.get("file_path", ""),
-                        "file_path": r.get("file_path", ""),
-                        "excerpt": (r.get("content") or "")[:300],
-                    }
-                    for r in results[:6]
-                ]
+                results = await search_tools.fzf_search(
+                    args.get("query", ""), k=int(args.get("k", 6))
+                )
+                return self._format_results(results)
+
             elif name == "reference_search":
-                results = await search_tools.ref_search(args.get("reference", ""), k=int(args.get("k", 6)))
-                return [
-                    {
-                        "title": r.get("title", ""),
-                        "file": r.get("file_path", ""),
-                        "file_path": r.get("file_path", ""),
-                        "target_title": r.get("target_title", ""),
-                        "excerpt": (r.get("content") or "")[:300],
-                    }
-                    for r in results[:6]
-                ]
+                results = await search_tools.ref_search(
+                    args.get("reference", ""), k=int(args.get("k", 6))
+                )
+                return self._format_results(results, extra_key="target_title")
+
             elif name == "graph_expansion":
-                note_ids = args.get("note_ids", [])
-                if isinstance(note_ids, list):
-                    note_id_set = set(note_ids)
-                    results = await search_tools.graph_expand(note_id_set, k=int(args.get("k", 6)))
-                    return [
-                        {
-                            "title": r.get("title", ""),
-                            "file": r.get("file_path", ""),
-                            "file_path": r.get("file_path", ""),
-                            "excerpt": (r.get("content") or "")[:300],
-                        }
-                        for r in results[:6]
-                    ]
+                ids = args.get("note_ids", [])
+                if isinstance(ids, list) and ids:
+                    results = await search_tools.graph_expand(
+                        set(int(i) for i in ids),
+                        k=int(args.get("k", 6)),
+                    )
+                    return self._format_results(results)
+                return []
+
         except Exception as exc:
+            log.warning("Tool %s failed: %s", name, exc)
             return {"error": str(exc)}
+
         return {"error": f"unknown tool: {name}"}
 
-    # ── Local fallback ────────────────────────────────────────────────────────
+    @staticmethod
+    def _format_results(
+        results: list[dict],
+        extra_key: str | None = None,
+    ) -> list[dict]:
+        out = []
+        for r in results[:8]:
+            item = {
+                "id": r.get("id", ""),
+                "title": r.get("title", ""),
+                "file": r.get("file_path", ""),
+                "file_path": r.get("file_path", ""),
+                "excerpt": (r.get("content") or "")[:400],
+            }
+            if extra_key and r.get(extra_key):
+                item[extra_key] = r[extra_key]
+            out.append(item)
+        return out
+
+    # ── Local fallback (no API key) ───────────────────────────────────────────
 
     async def _run_local(self, message: str, *, now: datetime) -> AgentResult:
-        context = []
+        context: list[dict] = []
         try:
             context = await search_and_enrich_blocks(message, k=4)
             from src.rag import search_tools
+
             context = search_tools.normalize_result_paths(context)
         except Exception:
             pass
@@ -390,23 +676,24 @@ class PersonalManagerAgent:
                     f"{(top.get('content') or '')[:200]}"
                 )
             else:
-                reply = "No matching notes found. (Set GEMINI_API_KEY in .env for full AI responses.)"
+                reply = (
+                    "I couldn't find anything about that in your notes. "
+                    "(Set GEMINI_API_KEY in .env for full AI responses.)"
+                )
         elif action.intent == "task":
             due = f" due {action.date}" if action.date else ""
             reply = f"Task captured: {action.text}{due}"
         elif action.intent == "event":
             when = " ".join(p for p in [action.date, action.time] if p)
             reply = f"Event noted: {action.text}" + (f" at {when}" if when else "")
-        else:
+        elif action.intent == "note":
             reply = "Note saved."
+        else:
+            reply = "Got it."
 
         return AgentResult(action=action, reply=reply, context=context)
 
-    def _parse_locally(self, message: str, now: datetime) -> AgentAction:
-        """Backward-compatible alias used by older tests."""
-        return self._infer_action(message, now)
-
-    # ── Intent inference (used for UI actions, not for the reply) ────────────
+    # ── Intent inference ──────────────────────────────────────────────────────
 
     _task_re = re.compile(
         r"^(?:add\s+)?(?:todo|task|remind me to|remember to|i need to)\s+(.+)$",
@@ -417,7 +704,12 @@ class PersonalManagerAgent:
         re.IGNORECASE,
     )
     _question_re = re.compile(
-        r"^(?:\?|ask|search|find|what|when|where|who|why|how)\b", re.IGNORECASE
+        r"^(?:\?|ask|search|find|what|when|where|who|why|how)\b",
+        re.IGNORECASE,
+    )
+    _note_re = re.compile(
+        r"^(?:note|save|write|log|record|capture)\b",
+        re.IGNORECASE,
     )
     _time_re = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", re.IGNORECASE)
 
@@ -432,35 +724,62 @@ class PersonalManagerAgent:
         if self._question_re.match(text) or text.endswith("?"):
             intent: Intent = "question"
             body = text
-        elif event_m or (time and any(w in text.lower() for w in ("meet", "call", "appointment", "event"))):
+        elif event_m or (
+            time
+            and any(w in text.lower() for w in ("meet", "call", "appointment", "event"))
+        ):
             intent = "event"
             body = event_m.group(1).strip() if event_m else text
-        elif task_m or any(w in text.lower() for w in ("todo", "remind", "due ", "need to")):
+        elif task_m or any(
+            w in text.lower() for w in ("todo", "remind", "due ", "need to")
+        ):
             intent = "task"
             body = task_m.group(1).strip() if task_m else text
+        elif self._note_re.match(text):
+            intent = "note"
+            body = text
         else:
+            # Default: treat as chat — do NOT auto-save
             intent = "chat"
             body = text
 
-        return AgentAction(intent=intent, text=self._clean(body), date=date, time=time, tags=tags)
+        return AgentAction(
+            intent=intent,
+            text=self._clean(body),
+            date=date,
+            time=time,
+            tags=tags,
+        )
 
-    def _extract_datetime(self, text: str, now: datetime) -> tuple[str | None, str | None]:
+    def _extract_datetime(
+        self, text: str, now: datetime
+    ) -> tuple[str | None, str | None]:
+        from datetime import timedelta
+
         lower = text.lower()
         t = self._extract_time(text)
         if "tomorrow" in lower:
-            from datetime import timedelta
             return (now.date() + timedelta(days=1)).isoformat(), t
         if "today" in lower or "tonight" in lower:
             return now.date().isoformat(), t
         if "yesterday" in lower:
-            from datetime import timedelta
             return (now.date() - timedelta(days=1)).isoformat(), t
         try:
             from dateparser.search import search_dates
-            matches = search_dates(text, settings={"RELATIVE_BASE": now, "PREFER_DATES_FROM": "future"})
+
+            matches = search_dates(
+                text,
+                settings={"RELATIVE_BASE": now, "PREFER_DATES_FROM": "future"},
+            )
             if matches:
                 _, parsed = matches[0]
-                return parsed.date().isoformat(), t or (parsed.strftime("%H:%M") if self._time_re.search(text) else None)
+                return (
+                    parsed.date().isoformat(),
+                    t
+                    or (
+                        parsed.strftime("%H:%M") if self._time_re.search(text) else None
+                    ),
+                )
         except Exception:
             pass
         return None, t
@@ -478,7 +797,19 @@ class PersonalManagerAgent:
         return f"{h:02d}:{mi:02d}" if h <= 23 and mi <= 59 else None
 
     def _clean(self, text: str) -> str:
-        text = re.sub(r"\b(today|tomorrow|tonight|next week|next month)\b", "", text, flags=re.I)
-        text = re.sub(r"\b(?:at|on|by|due)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b", "", text, flags=re.I)
+        text = re.sub(
+            r"\b(today|tomorrow|tonight|next week|next month)\b", "", text, flags=re.I
+        )
+        text = re.sub(
+            r"\b(?:at|on|by|due)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b",
+            "",
+            text,
+            flags=re.I,
+        )
         text = re.sub(r"(?<![\[`])#[\w-]+", "", text)
         return re.sub(r"\s{2,}", " ", text).strip(" ,.-")
+
+    # ── Backward-compat ───────────────────────────────────────────────────────
+
+    def _parse_locally(self, message: str, now: datetime) -> AgentAction:
+        return self._infer_action(message, now)
