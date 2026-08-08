@@ -99,16 +99,53 @@ class DevWorkspaceApp(App):
             return
         self._log_user(raw)
         self._set_status("thinking…", duration=0)
+
+        # Streaming state — we build the full reply from chunks and render
+        # each one incrementally into the RichLog.
+        streaming_started = False
+        stream_buffer: list[str] = []
+
+        async def _on_chunk(chunk: str) -> None:
+            nonlocal streaming_started
+            if not chunk:
+                return
+            stream_buffer.append(chunk)
+            try:
+                from .widgets.agent_panel import AgentPanel
+
+                panel = self.query_one("#agent-panel", AgentPanel)
+                if not streaming_started:
+                    # Write the "assistant" prefix once, then stream body
+                    panel.log_stream_start()
+                    streaming_started = True
+                panel.log_stream_chunk(chunk)
+            except Exception:
+                pass
+
         try:
-            result = await self._agent.run(raw)
+            result = await self._agent.run(raw, stream_callback=_on_chunk)
         except Exception as exc:
             self._log_agent(f"[red]error:[/red] {exc}")
             self._focus_input()
             return
-        self._apply_result(result)
+
+        if streaming_started:
+            # Close the streamed reply with a trailing blank line
+            try:
+                from .widgets.agent_panel import AgentPanel
+
+                self.query_one("#agent-panel", AgentPanel).log_stream_end()
+            except Exception:
+                pass
+            # Streaming already rendered the reply text; only run side-effects
+            # (tool traces, task/note handling) via _apply_result but suppress
+            # the duplicate log_agent call for plain chat/question replies.
+            self._apply_result(result, skip_reply_log=True)
+        else:
+            self._apply_result(result)
         self._focus_input()
 
-    def _apply_result(self, result: AgentResult):
+    def _apply_result(self, result: AgentResult, *, skip_reply_log: bool = False):
         # Show tool traces (dim)
         try:
             self.query_one("#agent-panel", AgentPanel).log_tool_calls(result.tool_calls)
@@ -122,7 +159,11 @@ class DevWorkspaceApp(App):
         # triggers file writing.  question/chat/unknown all just display the reply.
         if action.intent == "task":
             self._add_task(
-                action.text, due_date=action.date, tags=action.tags, reply=result.reply
+                action.text,
+                due_date=action.date,
+                tags=action.tags,
+                reply=result.reply,
+                skip_reply_log=skip_reply_log,
             )
         elif action.intent == "event":
             self._add_event(
@@ -131,13 +172,20 @@ class DevWorkspaceApp(App):
                 date=action.date,
                 tags=action.tags,
                 reply=result.reply,
+                skip_reply_log=skip_reply_log,
             )
         elif action.intent == "note":
             # Only save when the AI explicitly tagged this as [intent:note]
-            self._handle_note(action.text, result.reply, tags=action.tags)
+            self._handle_note(
+                action.text,
+                result.reply,
+                tags=action.tags,
+                skip_reply_log=skip_reply_log,
+            )
         else:
             # question / chat / anything else → display reply, do NOT write to disk
-            self._log_agent(result.reply)
+            if not skip_reply_log:
+                self._log_agent(result.reply)
             self._set_status("done")
 
     # ── Note / task helpers ───────────────────────────────────────────────────
@@ -157,13 +205,21 @@ class DevWorkspaceApp(App):
         self._refresh_notes()
         return filename
 
-    def _handle_note(self, text: str, reply: str, tags: list[str] | None = None):
+    def _handle_note(
+        self,
+        text: str,
+        reply: str,
+        tags: list[str] | None = None,
+        *,
+        skip_reply_log: bool = False,
+    ):
         self._ensure_capture_file()
         tag_text = " ".join(f"#{t}" for t in tags or [] if f"#{t}" not in text)
         line = f"- {text}" + (f" {tag_text}" if tag_text else "")
         store.add_note_content(text)
         store.append_line_to_current_file(line)
-        self._log_agent(reply or "saved.")
+        if not skip_reply_log:
+            self._log_agent(reply or "saved.")
         self._set_status("note saved")
         self._refresh_notes()
 
@@ -173,6 +229,8 @@ class DevWorkspaceApp(App):
         due_date: str | None = None,
         tags: list[str] | None = None,
         reply: str = "",
+        *,
+        skip_reply_log: bool = False,
     ):
         self._ensure_capture_file()
         item = store.add_item(text, date=due_date)
@@ -185,13 +243,15 @@ class DevWorkspaceApp(App):
             due_text = f" @due {due_date}" if due_date else ""
             line = f"- [ ] {text}{due_text}" + (f" {tag_text}" if tag_text else "")
             path = store.append_line_to_current_file(line)
-            self._log_agent(reply or f"Task captured: {text}")
+            if not skip_reply_log:
+                self._log_agent(reply or f"Task captured: {text}")
             self._set_status(f"task: {text[:40]}")
             if path:
                 asyncio.create_task(self._parse_note_now(path))
         else:
             # No capture file yet — still show the reply
-            self._log_agent(reply or f"Task captured: {text}")
+            if not skip_reply_log:
+                self._log_agent(reply or f"Task captured: {text}")
             self._set_status(f"task: {text[:40]}")
 
     def _add_event(
@@ -201,6 +261,8 @@ class DevWorkspaceApp(App):
         date: str | None = None,
         tags: list[str] | None = None,
         reply: str = "",
+        *,
+        skip_reply_log: bool = False,
     ):
         self._ensure_capture_file()
         item = store.add_item(text, time=time, date=date)
@@ -211,10 +273,12 @@ class DevWorkspaceApp(App):
                 f" {tag_text}" if tag_text else ""
             )
             store.append_line_to_current_file(line)
-            self._log_agent(reply or f"Event noted: {text}")
+            if not skip_reply_log:
+                self._log_agent(reply or f"Event noted: {text}")
             self._set_status(f"event: {text[:40]}")
         else:
-            self._log_agent(reply or f"Event noted: {text}")
+            if not skip_reply_log:
+                self._log_agent(reply or f"Event noted: {text}")
             self._set_status(f"event: {text[:40]}")
 
     # ── nvim ──────────────────────────────────────────────────────────────────
@@ -371,13 +435,13 @@ class DevWorkspaceApp(App):
         try:
             from src.ingestion.parser.core import parse_markdown
             from src.ingestion.db.notes import upsert_note
-            from src.ingestion.db.blocks import insert_blocks
+            from src.ingestion.db.blocks import insert_blocks, insert_references
             from src.ingestion.db.tasks import insert_tasks
             from src.ingestion.db.tags import insert_block_tags
 
             raw_content = path.read_text(encoding="utf-8")
             note_type = "journal" if "journals" in path.parts else "page"
-            title, blocks, tasks, _references, block_tags = parse_markdown(
+            title, blocks, tasks, references, block_tags = parse_markdown(
                 path, raw_content
             )
             note_id = await upsert_note(path, title, note_type, raw_content, "modified")
@@ -392,9 +456,14 @@ class DevWorkspaceApp(App):
                 task["block_id"] = local_to_db.get(task["block_id"])
             for tag in block_tags:
                 tag["block_id"] = local_to_db.get(tag["block_id"])
+            # Remap parser-local block indices to real DB IDs for references too
+            for ref in references:
+                if ref.get("source_block_id") is not None:
+                    ref["source_block_id"] = local_to_db.get(ref["source_block_id"])
 
             await insert_block_tags(block_ids, block_tags)
             await insert_tasks(note_id, tasks)
+            await insert_references(note_id, references)
             self._refresh_todos()
         except Exception as exc:
             self._log_agent(f"[red]quick parse failed:[/red] {exc}")

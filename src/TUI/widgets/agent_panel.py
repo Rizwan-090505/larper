@@ -49,6 +49,9 @@ class AgentPanel(Widget):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self._stream_started = False
+        self._stream_buffer = ""
+        self._stream_body_lines = 0
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -80,6 +83,51 @@ class AgentPanel(Widget):
         rich_text = self._linkify_notes(msg)
         log.write(rich_text)
         log.write("")
+
+    # ── Streaming helpers ─────────────────────────────────────────────────────
+
+    def log_stream_start(self) -> None:
+        """Write the 'agent HH:MM' header once before the first chunk arrives."""
+        log = self.query_one("#output-log", RichLog)
+        ts = datetime.now().strftime("%H:%M")
+        log.write(
+            f"  [bold #7aa2f7]agent[/bold #7aa2f7]  [dim #565f89]{ts}[/dim #565f89]"
+        )
+        self._stream_started = True
+        self._stream_buffer = ""
+        self._stream_body_lines = 0
+
+    def log_stream_chunk(self, chunk: str) -> None:
+        """Append a streamed chunk and re-render the reply-so-far as one block.
+
+        RichLog.write() always appends brand-new line(s) to the log — it has
+        no "update the last line" API. Writing each incoming chunk directly
+        (as the old code did) therefore split the reply across one RichLog
+        line per chunk instead of a normal flowing paragraph. Instead, we
+        accumulate the full text seen so far, drop the lines we rendered for
+        the previous (shorter) version of it, and re-write the whole thing —
+        giving a properly wrapped, continuously-updating paragraph.
+        """
+        log = self.query_one("#output-log", RichLog)
+        self._stream_buffer += chunk
+
+        if self._stream_body_lines and log.lines:
+            del log.lines[-self._stream_body_lines :]
+
+        rich_text = self._linkify_notes(self._stream_buffer)
+        lines_before = len(log.lines)
+        log.write(rich_text)
+        self._stream_body_lines = len(log.lines) - lines_before
+
+    def log_stream_end(self) -> None:
+        """Write a trailing blank line to visually close the streamed reply."""
+        if self._stream_started:
+            self.query_one("#output-log", RichLog).write("")
+            self._stream_started = False
+            self._stream_buffer = ""
+            self._stream_body_lines = 0
+
+    # ── Tool-call logging ─────────────────────────────────────────────────────
 
     def log_tool_call(self, tool_name: str, args: dict):
         log = self.query_one("#output-log", RichLog)

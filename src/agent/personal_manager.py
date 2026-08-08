@@ -403,6 +403,7 @@ class PersonalManagerAgent:
     def __init__(self) -> None:
         self._history: list[dict] = []
         self._api_key: str = self._find_api_key()
+        self._last_error: str = ""
 
     def _find_api_key(self) -> str:
         import os
@@ -415,17 +416,38 @@ class PersonalManagerAgent:
 
     # ── Public ────────────────────────────────────────────────────────────────
 
-    async def run(self, message: str, *, now: datetime | None = None) -> AgentResult:
+    async def run(
+        self,
+        message: str,
+        *,
+        now: datetime | None = None,
+        stream_callback=None,
+    ) -> AgentResult:
+        """Run the agent.
+
+        Args:
+            message: User message text.
+            now: Override the current datetime (useful for tests).
+            stream_callback: Optional async callable(str) that receives each
+                text chunk as it arrives from the model, enabling incremental
+                display in the TUI.  Called with an empty string ``""`` once
+                all tool rounds are done and the final synthesis has started.
+        """
         now = now or datetime.now()
+        self._last_error = ""
         if self._api_key:
-            result = await self._run_gemini(message, now=now)
+            result = await self._run_gemini(
+                message, now=now, stream_callback=stream_callback
+            )
             if result:
                 return result
         return await self._run_local(message, now=now)
 
     # ── Gemini agentic loop ───────────────────────────────────────────────────
 
-    async def _run_gemini(self, message: str, *, now: datetime) -> AgentResult | None:
+    async def _run_gemini(
+        self, message: str, *, now: datetime, stream_callback=None
+    ) -> AgentResult | None:
         # Append user message
         self._history.append(
             {
@@ -455,36 +477,60 @@ class PersonalManagerAgent:
                     temperature=0.4,  # lower temp → more faithful to retrieved content
                     max_output_tokens=MAX_OUTPUT_TOKENS,
                 )
-                resp = await client.aio.models.generate_content(
+
+                # Stream every round.  For tool-calling rounds the function_call
+                # parts are small and arrive quickly; we collect them all before
+                # executing tools.  For the final text-only round the stream lets
+                # the TUI display tokens as they arrive.
+                round_text_chunks: list[str] = []
+                fn_call_parts: list = []  # whole Part objects (preserves thought_signature)
+                candidate = None
+                finish_reason = ""
+
+                stream = await client.aio.models.generate_content_stream(
                     model=GEMINI_MODEL,
                     contents=contents,
                     config=config,
                 )
+                async for chunk in stream:
+                    if not chunk.candidates:
+                        continue
+                    candidate = chunk.candidates[0]
+                    finish_reason = str(getattr(candidate, "finish_reason", "") or "")
+                    for p in candidate.content.parts or []:
+                        if getattr(p, "thought", False):
+                            continue
+                        if p.function_call:
+                            # Keep the WHOLE Part, not just .function_call.
+                            # Gemini 3.x attaches a `thought_signature` to the
+                            # Part alongside the function_call, and requires
+                            # that same signature to be echoed back verbatim
+                            # when the call is replayed into conversation
+                            # history on the next round. Dropping it (as
+                            # `Part(function_call=fc)` did before) causes:
+                            #   400 INVALID_ARGUMENT: Function call is missing
+                            #   a thought_signature in functionCall parts.
+                            fn_call_parts.append(p)
+                        elif p.text:
+                            cleaned = _THINKING_RE.sub("", p.text)
+                            if cleaned:
+                                round_text_chunks.append(cleaned)
+                                # Only stream text to UI when there are no
+                                # pending tool calls (i.e. this is a text round).
+                                # We don't know yet whether fn_calls will follow,
+                                # so we buffer and flush below.
 
-                if not resp.candidates:
-                    fr = getattr(resp, "prompt_feedback", None)
-                    log.warning(
-                        "Gemini returned no candidates (round %d): %s", _round, fr
-                    )
+                if candidate is None:
+                    log.warning("Gemini returned no candidates (round %d)", _round)
+                    self._last_error = "Gemini returned no candidates (possible safety block or invalid request)."
                     return None
 
-                candidate = resp.candidates[0]
-                parts = candidate.content.parts or []
+                if round_text_chunks:
+                    round_text = "".join(round_text_chunks).strip()
+                    if round_text:
+                        final_text = round_text
 
-                # Collect text
-                text_parts = []
-                for p in parts:
-                    if getattr(p, "thought", False):
-                        continue
-                    if p.text:
-                        cleaned = _THINKING_RE.sub("", p.text).strip()
-                        if cleaned:
-                            text_parts.append(cleaned)
-                if text_parts:
-                    final_text = "\n".join(text_parts).strip()
-
-                finish_reason = str(getattr(candidate, "finish_reason", "") or "")
-                if "MAX_TOKENS" in finish_reason.upper():
+                if "MAX_TOKENS" in finish_reason.upper() and not fn_call_parts:
                     log.warning(
                         "Gemini reply truncated by MAX_TOKENS (round %d, %d chars so "
                         "far) — requesting continuation.",
@@ -492,22 +538,43 @@ class PersonalManagerAgent:
                         len(final_text),
                     )
                     final_text = await self._continue_truncated_reply(
-                        client, system, contents, candidate, final_text
+                        client,
+                        system,
+                        contents,
+                        candidate,
+                        final_text,
+                        stream_callback=stream_callback,
                     )
 
-                fn_calls = [p.function_call for p in parts if p.function_call]
-
-                if not fn_calls:
-                    # No more tool calls — done
+                if not fn_call_parts:
+                    # Final text-only round — deliver all collected text to the
+                    # stream_callback now (chunks were buffered above to avoid
+                    # sending partial text before we knew tool calls were absent).
+                    if stream_callback and final_text:
+                        await stream_callback(final_text)
                     exhausted_with_pending_calls = False
                     break
 
+                # There are tool calls — reconstruct a Content from streamed parts
+                # so we can append it to the conversation. Function-call parts
+                # are re-used as-is (see comment above) to preserve thought_signature.
+                from google.genai import types as _gtypes
+
+                model_parts = []
+                if round_text_chunks:
+                    model_parts.append(
+                        _gtypes.Part.from_text(text="".join(round_text_chunks))
+                    )
+                model_parts.extend(fn_call_parts)
+                model_content = _gtypes.Content(role="model", parts=model_parts)
+
                 # Append model turn with function calls
-                contents.append(candidate.content)
+                contents.append(model_content)
 
                 # Execute tools
                 tool_result_parts = []
-                for fc in fn_calls:
+                for p in fn_call_parts:
+                    fc = p.function_call
                     name = fc.name
                     args = self._coerce_args(fc.args)
                     tool_log.append({"tool": name, "args": args})
@@ -550,40 +617,54 @@ class PersonalManagerAgent:
                     temperature=0.4,
                     max_output_tokens=MAX_OUTPUT_TOKENS,
                 )
-                resp = await client.aio.models.generate_content(
+
+                # ── Streaming synthesis round ─────────────────────────────────
+                # Use generate_content_stream so text arrives in the TUI
+                # chunk-by-chunk rather than all at once after a long wait.
+                streamed_chunks: list[str] = []
+                fin_candidate = None
+                fin_stream = await client.aio.models.generate_content_stream(
                     model=GEMINI_MODEL,
                     contents=contents,
                     config=final_config,
                 )
-                if resp.candidates:
-                    fin_candidate = resp.candidates[0]
-                    parts = fin_candidate.content.parts or []
-                    text_parts = []
-                    for p in parts:
+                async for chunk in fin_stream:
+                    if not chunk.candidates:
+                        continue
+                    fin_candidate = chunk.candidates[0]
+                    for p in fin_candidate.content.parts or []:
                         if getattr(p, "thought", False):
                             continue
                         if p.text:
-                            cleaned = _THINKING_RE.sub("", p.text).strip()
+                            cleaned = _THINKING_RE.sub("", p.text)
                             if cleaned:
-                                text_parts.append(cleaned)
-                    if text_parts:
-                        final_text = "\n".join(text_parts).strip()
-                    if (
-                        "MAX_TOKENS"
-                        in str(
-                            getattr(fin_candidate, "finish_reason", "") or ""
-                        ).upper()
-                    ):
-                        log.warning(
-                            "Forced-synthesis reply also truncated by MAX_TOKENS — "
-                            "requesting continuation."
-                        )
-                        final_text = await self._continue_truncated_reply(
-                            client, system, contents, fin_candidate, final_text
-                        )
+                                streamed_chunks.append(cleaned)
+                                if stream_callback:
+                                    await stream_callback(cleaned)
 
-        except Exception:
+                if streamed_chunks:
+                    final_text = "".join(streamed_chunks).strip()
+
+                if fin_candidate is not None and (
+                    "MAX_TOKENS"
+                    in str(getattr(fin_candidate, "finish_reason", "") or "").upper()
+                ):
+                    log.warning(
+                        "Forced-synthesis reply also truncated by MAX_TOKENS — "
+                        "requesting continuation."
+                    )
+                    final_text = await self._continue_truncated_reply(
+                        client,
+                        system,
+                        contents,
+                        fin_candidate,
+                        final_text,
+                        stream_callback=stream_callback,
+                    )
+
+        except Exception as exc:
             log.exception("Gemini call failed")
+            self._last_error = f"{type(exc).__name__}: {exc}"
             return None
 
         if not final_text:
@@ -591,6 +672,9 @@ class PersonalManagerAgent:
                 "Gemini agent produced no final text after %d tool calls — "
                 "falling back to local parser.",
                 len(tool_log),
+            )
+            self._last_error = (
+                f"Gemini produced no final text after {len(tool_log)} tool call(s)."
             )
             return None
 
@@ -632,6 +716,8 @@ class PersonalManagerAgent:
         contents: list,
         candidate,
         partial_text: str,
+        *,
+        stream_callback=None,
     ) -> str:
         accumulated = partial_text
         convo = list(contents) + [candidate.content]
@@ -652,8 +738,10 @@ class PersonalManagerAgent:
                     ],
                 )
             )
+            cont_candidate = None
+            streamed_chunks: list[str] = []
             try:
-                resp = await client.aio.models.generate_content(
+                cont_stream = await client.aio.models.generate_content_stream(
                     model=GEMINI_MODEL,
                     contents=convo,
                     config=types.GenerateContentConfig(
@@ -662,35 +750,47 @@ class PersonalManagerAgent:
                         max_output_tokens=MAX_OUTPUT_TOKENS,
                     ),
                 )
+                async for chunk in cont_stream:
+                    if not chunk.candidates:
+                        continue
+                    cont_candidate = chunk.candidates[0]
+                    for p in cont_candidate.content.parts or []:
+                        if getattr(p, "thought", False):
+                            continue
+                        if p.text:
+                            cleaned = _THINKING_RE.sub("", p.text)
+                            if cleaned:
+                                streamed_chunks.append(cleaned)
+                                if stream_callback:
+                                    await stream_callback(cleaned)
             except Exception:
                 log.exception("Continuation call failed")
                 break
 
-            if not resp.candidates:
+            chunk_text = "".join(streamed_chunks).strip()
+            if chunk_text:
+                accumulated = f"{accumulated}\n{chunk_text}"
+
+            if cont_candidate is not None:
+                # Rebuild a synthetic Content so we can append it to convo
+                convo.append(
+                    types.Content(
+                        role="model",
+                        parts=[types.Part.from_text(text=chunk_text)],
+                    )
+                )
+                if (
+                    "MAX_TOKENS"
+                    not in str(
+                        getattr(cont_candidate, "finish_reason", "") or ""
+                    ).upper()
+                ):
+                    break
+                log.warning(
+                    "Continuation still truncated by MAX_TOKENS — trying again."
+                )
+            else:
                 break
-
-            cont_candidate = resp.candidates[0]
-            parts = cont_candidate.content.parts or []
-            chunk_parts = []
-            for p in parts:
-                if getattr(p, "thought", False):
-                    continue
-                if p.text:
-                    cleaned = _THINKING_RE.sub("", p.text).strip()
-                    if cleaned:
-                        chunk_parts.append(cleaned)
-            chunk = "\n".join(chunk_parts).strip()
-            if chunk:
-                accumulated = f"{accumulated}\n{chunk}"
-
-            convo.append(cont_candidate.content)
-
-            if (
-                "MAX_TOKENS"
-                not in str(getattr(cont_candidate, "finish_reason", "") or "").upper()
-            ):
-                break
-            log.warning("Continuation still truncated by MAX_TOKENS — trying again.")
 
         return accumulated
 
@@ -816,6 +916,17 @@ class PersonalManagerAgent:
 
         action = self._infer_action(message, now)
 
+        # Build a note about *why* we're in local-only mode, so the message
+        # doesn't misleadingly tell the user to "set" a key that is already
+        # set — if a key is present but the call still failed, surface the
+        # real reason instead.
+        if self._api_key and self._last_error:
+            ai_note = f"(AI mode failed: {self._last_error})"
+        elif self._api_key:
+            ai_note = "(AI mode is unavailable right now — check logs for details.)"
+        else:
+            ai_note = "(Set GEMINI_API_KEY in .env for full AI responses.)"
+
         if action.intent == "question":
             if context:
                 top = context[0]
@@ -824,10 +935,7 @@ class PersonalManagerAgent:
                     f"{(top.get('content') or '')[:200]}"
                 )
             else:
-                reply = (
-                    "I couldn't find anything about that in your notes. "
-                    "(Set GEMINI_API_KEY in .env for full AI responses.)"
-                )
+                reply = f"I couldn't find anything about that in your notes. {ai_note}"
         elif action.intent == "task":
             due = f" due {action.date}" if action.date else ""
             reply = f"Task captured: {action.text}{due}"
