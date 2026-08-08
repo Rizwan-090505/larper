@@ -22,6 +22,9 @@ Key behaviours
      fuzzy_search      – substring / fuzzy match
      reference_search  – [[wikilink]] lookup
      graph_expansion   – expand from block IDs through graph edges
+     get_note          – read a note file (with optional line range)
+     backtrack         – which notes reference this note / block
+     get_todos         – fetch tasks with full metadata understanding
 """
 
 from __future__ import annotations
@@ -186,14 +189,15 @@ _TOOLS = [
                     "Expand from known block IDs through the knowledge graph "
                     "(parent/child blocks, [[wikilinks]], shared #tags, file-path proximity). "
                     "Use after search_notes when you have result IDs and want to find "
-                    "closely related content not caught by the initial search."
+                    "closely related content not caught by the initial search. "
+                    "Also use after get_note to explore what links out from a note."
                 ),
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
                         "note_ids": types.Schema(
                             type=types.Type.ARRAY,
-                            description="List of block IDs returned by previous searches",
+                            description="List of block IDs returned by previous searches or get_note",
                             items=types.Schema(type=types.Type.INTEGER),
                         ),
                         "k": types.Schema(
@@ -202,6 +206,114 @@ _TOOLS = [
                         ),
                     },
                     required=["note_ids"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="get_note",
+                description=(
+                    "Read the full raw content of a specific note file, optionally "
+                    "limited to a line range. Use when you need to see the exact text of "
+                    "a note rather than search-result excerpts — e.g. when the user asks "
+                    "'show me my drone research note' or 'what's on lines 5-20 of meeting4aug.md'. "
+                    "Returns content, metadata, and the DB blocks that fall in the line range."
+                ),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "file_path": types.Schema(
+                            type=types.Type.STRING,
+                            description=(
+                                "Relative path to the note file from the vault root, "
+                                "e.g. 'pages/fyp/Droneresearch.md' or 'journals/2026-08-07.md'"
+                            ),
+                        ),
+                        "start_line": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="First line to return (1-indexed, inclusive). Omit for start of file.",
+                        ),
+                        "end_line": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="Last line to return (1-indexed, inclusive). Omit for end of file.",
+                        ),
+                    },
+                    required=["file_path"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="backtrack",
+                description=(
+                    "Find all notes that reference (link back to) a given note or block "
+                    "via [[wikilinks]]. Use when the user asks 'what links to X?', "
+                    "'what references my drone note?', or 'where is this mentioned?'. "
+                    "Provide file_path to find all back-links to a whole note, "
+                    "or block_id to find back-links to a specific block."
+                ),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "file_path": types.Schema(
+                            type=types.Type.STRING,
+                            description=(
+                                "Relative path of the note to find back-links for, "
+                                "e.g. 'pages/fyp/Droneresearch.md'"
+                            ),
+                        ),
+                        "block_id": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="Block ID to find back-links for (from a previous search result)",
+                        ),
+                        "k": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="Max number of back-links to return (default 6)",
+                        ),
+                    },
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="get_todos",
+                description=(
+                    "Fetch tasks / to-dos from the database with full natural-language "
+                    "metadata: due dates, priorities, tags, recurrence, start dates. "
+                    "Use for any question about tasks, todos, what needs to be done, "
+                    "what's overdue, upcoming deadlines, or specific priority items. "
+                    "All filters are optional — omit to get all pending tasks."
+                ),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "filter_done": types.Schema(
+                            type=types.Type.BOOLEAN,
+                            description=(
+                                "true → only completed tasks, "
+                                "false → only pending tasks, "
+                                "omit → both"
+                            ),
+                        ),
+                        "tag": types.Schema(
+                            type=types.Type.STRING,
+                            description="Filter by tag (without #)",
+                        ),
+                        "due_before": types.Schema(
+                            type=types.Type.STRING,
+                            description="ISO date (YYYY-MM-DD) — tasks due on or before this date",
+                        ),
+                        "due_after": types.Schema(
+                            type=types.Type.STRING,
+                            description="ISO date (YYYY-MM-DD) — tasks due on or after this date",
+                        ),
+                        "priority": types.Schema(
+                            type=types.Type.STRING,
+                            description="'high', 'medium', or 'low'",
+                        ),
+                        "file_path": types.Schema(
+                            type=types.Type.STRING,
+                            description="Restrict to tasks from a specific file",
+                        ),
+                        "k": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="Max results (default 6)",
+                        ),
+                    },
                 ),
             ),
         ]
@@ -233,10 +345,27 @@ You may call multiple tools per turn to build a complete picture:
   2. tag_search          — when a #tag is mentioned or relevant
   3. fuzzy_search        — for specific names, phrases, or file titles
   4. reference_search    — for [[wikilink]] targets
-  5. graph_expansion     — to explore related content once you have block IDs
+  5. graph_expansion     — to explore related content once you have block IDs;
+                           also use after get_note to follow links outward
+  6. get_note            — to read the FULL content of a specific file, or a
+                           precise line range (use when excerpts aren't enough)
+  7. backtrack           — to find all notes that reference a given note/block
+                           (the "who links here?" query)
+  8. get_todos           — to fetch tasks with metadata (due date, priority, tags,
+                           recurrence); prefer this over search_notes for task questions
 
 Use graph_expansion when the initial results are thin; it expands through
 parent/child blocks, [[links]], shared #tags, and file-path segments.
+
+Use get_note when the user asks to "show", "read", or "open" a specific file,
+or when search excerpts are clearly incomplete.
+
+Use backtrack when the user asks what links TO a note, or wants to understand
+the reverse graph — "what references X?".
+
+Use get_todos for any question about pending work, deadlines, priorities, or
+what tasks are overdue. It applies the same natural-language date and metadata
+understanding as the ingestion pipeline.
 
 # WHAT NOT TO CAPTURE
 Chat conversation, your questions, and general dialogue are NEVER saved as notes.
@@ -392,16 +521,9 @@ class PersonalManagerAgent:
                     )
 
                 contents.append(types.Content(role="user", parts=tool_result_parts))
-                # If this was the last permitted round, we exit the for-loop
-                # next iteration check without a break — remember that so we
-                # can force a proper answer below instead of silently bailing.
                 exhausted_with_pending_calls = True
 
             if exhausted_with_pending_calls or not final_text:
-                # The model kept calling tools (or never emitted text) until
-                # we ran out of rounds. Ask it — with tools disabled — to
-                # synthesize a final answer from everything gathered so far
-                # instead of throwing the whole (successful) turn away.
                 log.warning(
                     "Gemini agent hit MAX_TOOL_ROUNDS=%d without a final answer "
                     "(tools called: %d) — forcing a text-only synthesis round.",
@@ -493,7 +615,6 @@ class PersonalManagerAgent:
 
         # Safety: chat / question must never trigger note-saving
         if action.intent in ("chat", "question"):
-            # leave intent as-is; TUI will not save
             pass
 
         return AgentResult(
@@ -512,11 +633,6 @@ class PersonalManagerAgent:
         candidate,
         partial_text: str,
     ) -> str:
-        """
-        If Gemini stops mid-reply because it hit max_output_tokens, ask it to
-        keep going from where it left off (instead of silently showing a
-        cut-off answer), and stitch the pieces together.
-        """
         accumulated = partial_text
         convo = list(contents) + [candidate.content]
 
@@ -629,6 +745,38 @@ class PersonalManagerAgent:
                     return self._format_results(results)
                 return []
 
+            elif name == "get_note":
+                result = await search_tools.get_note(
+                    file_path=args.get("file_path", ""),
+                    start_line=args.get("start_line"),
+                    end_line=args.get("end_line"),
+                )
+                return result
+
+            elif name == "backtrack":
+                results = await search_tools.backtrack(
+                    file_path=args.get("file_path"),
+                    block_id=args.get("block_id"),
+                    k=int(args.get("k", 6)),
+                )
+                return results
+
+            elif name == "get_todos":
+                filter_done = args.get("filter_done")
+                # Gemini may send filter_done as a string
+                if isinstance(filter_done, str):
+                    filter_done = filter_done.lower() == "true"
+                results = await search_tools.get_todos(
+                    filter_done=filter_done,
+                    tag=args.get("tag"),
+                    due_before=args.get("due_before"),
+                    due_after=args.get("due_after"),
+                    priority=args.get("priority"),
+                    file_path=args.get("file_path"),
+                    k=int(args.get("k", 6)),
+                )
+                return results
+
         except Exception as exc:
             log.warning("Tool %s failed: %s", name, exc)
             return {"error": str(exc)}
@@ -711,7 +859,7 @@ class PersonalManagerAgent:
         r"^(?:note|save|write|log|record|capture)\b",
         re.IGNORECASE,
     )
-    _time_re = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", re.IGNORECASE)
+    _time_re = re.compile(r"\b(\d{1,2})(?:(:(\d{2}))?)\s*(am|pm)?\b", re.IGNORECASE)
 
     def _infer_action(self, message: str, now: datetime) -> AgentAction:
         text = message.strip()
@@ -739,7 +887,6 @@ class PersonalManagerAgent:
             intent = "note"
             body = text
         else:
-            # Default: treat as chat — do NOT auto-save
             intent = "chat"
             body = text
 
@@ -788,8 +935,8 @@ class PersonalManagerAgent:
         m = self._time_re.search(text)
         if not m:
             return None
-        h, mi = int(m.group(1)), int(m.group(2) or "0")
-        mer = (m.group(3) or "").lower()
+        h, mi = int(m.group(1)), int(m.group(3) or "0")
+        mer = (m.group(4) or "").lower()
         if mer == "pm" and h < 12:
             h += 12
         if mer == "am" and h == 12:
