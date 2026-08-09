@@ -3,7 +3,7 @@ from textual.app import ComposeResult
 from textual.widgets import Static, ListView, ListItem, Label
 from textual.binding import Binding
 from textual.worker import get_current_worker
-from textual.message import Message
+from textual.events import Click
 from datetime import datetime
 import asyncio
 import re
@@ -21,6 +21,7 @@ except ImportError:
     from src.ingestion.db.connection import get_connection
 
 
+# Matches 'todo: my task' or 'done: my task' format
 TASK_PREFIX_RE = re.compile(r"^(\s*)(?:[-*]\s+)?(todo|done)\s*:\s*(.+)$", re.IGNORECASE)
 
 
@@ -54,14 +55,16 @@ class TodoItem(ListItem):
         self._check_overdue()
 
     def _check_overdue(self):
-        """Check if task is overdue."""
+        """Check if task is overdue based on ISO date."""
         if self._item.date and not self._is_done:
             from datetime import date
 
             try:
-                due_date = date.fromisoformat(self._item.date)
+                # ISO dates start with YYYY-MM-DD, slice the first 10 characters
+                due_date_str = self._item.date[:10]
+                due_date = date.fromisoformat(due_date_str)
                 self._is_overdue = due_date < date.today()
-            except:
+            except (ValueError, TypeError):
                 self._is_overdue = False
 
     def compose(self) -> ComposeResult:
@@ -90,7 +93,7 @@ class TodoItem(ListItem):
         asyncio.get_event_loop().create_task(highlight())
 
     async def toggle_done(self):
-        """Toggle task done status in database."""
+        """Toggle task done status in database and markdown."""
         self._is_done = not self._is_done
         await self._update_markdown()
         await self._update_database()
@@ -136,21 +139,27 @@ class TodoItem(ListItem):
                 if target_title not in body_line:
                     continue
 
-                match = TASK_PREFIX_RE.match(body_line)
-                if not match:
-                    continue
-
-                # Replace todo: with done: or vice versa
-                prefix = match.group(1)  # whitespace/bullet
-                current_status = match.group(2).lower()
-                task_body = match.group(3)
-
-                new_status = "done" if self._is_done else "todo"
                 newline = "\n" if line.endswith("\n") else ""
-                lines[idx] = f"{prefix}{new_status}: {task_body}{newline}"
 
-                filepath.write_text("".join(lines), encoding="utf-8")
-                return
+                # 1. Try to match standard markdown tasks: - [ ] or - [x]
+                cb_match = re.match(r"^(\s*[-*]\s+)\[([ xX])\](.*?)$", body_line)
+                if cb_match:
+                    prefix = cb_match.group(1)
+                    rest = cb_match.group(3)
+                    new_box = "[x]" if self._is_done else "[ ]"
+                    lines[idx] = f"{prefix}{new_box}{rest}{newline}"
+                    filepath.write_text("".join(lines), encoding="utf-8")
+                    return
+
+                # 2. Try to match 'todo:' / 'done:' syntax
+                match = TASK_PREFIX_RE.match(body_line)
+                if match:
+                    prefix = match.group(1)  # whitespace/bullet
+                    task_body = match.group(3)
+                    new_status = "done" if self._is_done else "todo"
+                    lines[idx] = f"{prefix}{new_status}: {task_body}{newline}"
+                    filepath.write_text("".join(lines), encoding="utf-8")
+                    return
         except Exception as e:
             print(f"Error updating task markdown: {e}")
 
@@ -178,9 +187,10 @@ class TodoItem(ListItem):
         except Exception:
             pass  # Label not ready yet, will be set in compose()
 
-    def on_click(self):
+    async def on_click(self, event: Click):
         """Handle click on the todo item to toggle done status."""
-        asyncio.create_task(self.toggle_done())
+        event.stop()
+        await self.toggle_done()
 
 
 class TodosPanel(Widget):
@@ -234,10 +244,11 @@ class TodosPanel(Widget):
         self._update_todos(tasks_with_ids)
 
     async def _get_tasks_with_ids(self) -> list[tuple[Item, int, int, str]]:
-        """Get tasks from database with their IDs, including overdue tasks."""
+        """Get tasks from database with their IDs, utilizing SQLite's native ISO date handling."""
         try:
             from datetime import date
 
+            # ISO 8601 date string 'YYYY-MM-DD'
             today = date.today().isoformat()
 
             async with get_connection() as conn:
@@ -251,9 +262,10 @@ class TodosPanel(Widget):
                         n.file_path, 
                         t.is_done,
                         CASE 
-                            WHEN t.due_date IS NULL THEN 2
-                            WHEN t.due_date < ? THEN 0
-                            ELSE 1
+                            WHEN t.due_date IS NOT NULL AND date(t.due_date) = ? THEN 0
+                            WHEN t.due_date IS NOT NULL AND date(t.due_date) < ? THEN 1
+                            WHEN t.due_date IS NOT NULL AND date(t.due_date) > ? THEN 2
+                            ELSE 3
                         END as priority_group
                     FROM tasks t
                     JOIN notes n ON t.note_id = n.id
@@ -261,9 +273,9 @@ class TodosPanel(Widget):
                     ORDER BY 
                         priority_group ASC,
                         t.due_date ASC,
-                        t.title
+                        t.id ASC
                 """,
-                    (today,),
+                    (today, today, today),
                 )
                 rows = await cursor.fetchall()
 
