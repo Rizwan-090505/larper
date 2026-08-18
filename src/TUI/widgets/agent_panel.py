@@ -213,13 +213,16 @@ class ChatMessage(Widget):
     ChatMessage {
         height: auto;
         margin: 0 0 1 0;
+        background: transparent;
     }
     ChatMessage .msg-header {
         height: 1;
         layout: horizontal;
+        background: transparent;
     }
     ChatMessage .msg-role {
         width: 1fr;
+        background: transparent;
     }
     ChatMessage .msg-copy-btn {
         min-width: 10;
@@ -228,17 +231,18 @@ class ChatMessage(Widget):
         min-height: 1;
         border: none;
         padding: 0 1;
-        background: #1e2030;
-        color: #3d59a1;
+        background: transparent;
+        color: $text-muted;
         content-align: center middle;
     }
     ChatMessage .msg-copy-btn:hover {
-        background: #3b4261;
-        color: #c0caf5;
+        background: $accent 14%;
+        color: ansi_default;
     }
     ChatMessage .msg-body {
         padding: 0 0;
         height: auto;
+        background: transparent;
     }
     """
 
@@ -296,19 +300,20 @@ class AgentPanel(Widget):
     DEFAULT_CSS = """
     AgentPanel {
         height: 1fr;
-        background: #1a1b26;
+        background: transparent;
         border: none;
     }
     AgentPanel .panel-title {
-        background: #1e2030;
-        color: #565f89;
+        background: transparent;
+        color: $text-muted;
         padding: 0 1;
         height: 1;
     }
     AgentPanel .title-bar {
-        background: #1e2030;
+        background: transparent;
         height: 1;
         layout: horizontal;
+        border-bottom: tall $foreground 10%;
     }
     AgentPanel .title-bar .panel-title {
         width: 1fr;
@@ -320,20 +325,20 @@ class AgentPanel(Widget):
         min-height: 1;
         border: none;
         padding: 0 1;
-        background: #1e2030;
-        color: #7aa2f7;
+        background: transparent;
+        color: $accent;
         content-align: center middle;
     }
     AgentPanel #copy-last-btn:hover {
-        background: #3b4261;
-        color: #c0caf5;
+        background: $accent 14%;
+        color: ansi_default;
     }
     AgentPanel #output-log {
         background: transparent;
         border: none;
         height: 1fr;
         padding: 0 1;
-        scrollbar-color: #3b4261;
+        scrollbar-color: $foreground 30%;
         scrollbar-size: 1 1;
     }
     """

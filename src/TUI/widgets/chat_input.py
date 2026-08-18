@@ -73,8 +73,8 @@ class ChatInput(Widget):
     ChatInput {
         height: auto;
         max-height: 8;
-        background: #1e2030;
-        border-top: solid #3b4261;
+        background: transparent;
+        border-top: tall $foreground 20%;
         padding: 0;
         layout: horizontal;
         align: left top;
@@ -82,7 +82,7 @@ class ChatInput(Widget):
     ChatInput #prompt-label {
         width: 4;
         height: 3;
-        color: #e0af68;
+        color: $accent;
         padding: 1 1 0 1;
         text-style: bold;
         content-align: left top;
@@ -93,10 +93,10 @@ class ChatInput(Widget):
         height: auto;
         max-height: 8;
         min-height: 3;
-        color: #c0caf5;
+        color: ansi_default;
         padding: 1 0;
         width: 1fr;
-        scrollbar-color: #3b4261;
+        scrollbar-color: $foreground 30%;
         scrollbar-size: 1 1;
     }
     ChatInput TextArea:focus {
@@ -106,7 +106,8 @@ class ChatInput(Widget):
     ChatInput #nav-hint {
         width: auto;
         height: 3;
-        color: #3b4261;
+        color: $text-muted;
+        text-style: dim;
         padding: 1 1 0 1;
         content-align: right top;
     }

@@ -21,48 +21,49 @@ class SearchModal(ModalScreen):
     DEFAULT_CSS = """
     SearchModal {
         align: center middle;
-        background: $background 70%;
+        background: transparent;
     }
     SearchModal #search-dialog {
-        width: 80;
-        height: 30;
-        border: thick $accent;
-        background: $surface;
+        width: 70;
+        height: 24;
+        border: tall $foreground 10%;
+        background: ansi_default;
     }
     SearchModal #search-header {
-        background: $accent;
-        color: $background;
+        background: $accent 24%;
+        color: ansi_default;
         height: 1;
         padding: 0 1;
         text-style: bold;
     }
     SearchModal #search-input {
         height: 3;
-        border: solid $primary;
-        background: $surface-darken-1;
-        color: $text;
+        border: tall $foreground 20%;
+        background: transparent;
+        color: ansi_default;
         margin: 1 1 0 1;
     }
     SearchModal #search-input:focus {
-        border: solid $accent;
+        border: tall $accent 100%;
     }
     SearchModal #search-count {
         height: 1;
         padding: 0 2;
         color: $text-muted;
+        text-style: dim;
     }
     SearchModal #search-results {
         height: 1fr;
-        border: solid $primary;
-        background: $surface;
+        border: tall $foreground 10%;
+        background: transparent;
         margin: 0 1;
     }
     SearchModal #search-footer {
         height: 1;
-        background: $surface-darken-1;
-        padding: 0 1;
+        padding: 0 2;
         color: $text-muted;
-        dock: bottom;
+        text-style: dim;
+        margin: 0 1 1 1;
     }
     SearchModal SearchResultItem {
         padding: 0 1;

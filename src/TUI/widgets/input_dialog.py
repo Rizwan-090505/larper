@@ -19,10 +19,10 @@ class NotePickerItem(ListItem):
         padding: 0 1;
         height: 1;
         background: transparent;
-        color: #565f89;
+        color: $text-muted;
     }
-    NotePickerItem:hover { background: #292e42; color: #c0caf5; }
-    NotePickerItem.-highlight { background: #292e42; color: #7aa2f7; }
+    NotePickerItem:hover { background: $accent 14%; color: ansi_default; }
+    NotePickerItem.-highlight { background: $accent 24%; color: $accent; }
     """
 
     def __init__(self, filepath: str, display: str):
@@ -52,49 +52,51 @@ class FilenameInputDialog(ModalScreen):
     DEFAULT_CSS = """
     FilenameInputDialog {
         align: center middle;
+        background: transparent;
     }
 
     FilenameInputDialog > Vertical {
         width: 64;
         height: 28;
-        border: solid #7aa2f7;
-        background: #1e2030;
+        border: tall $foreground 10%;
+        background: ansi_default;
         padding: 1 2;
         layout: vertical;
     }
 
     FilenameInputDialog .dialog-title {
         text-style: bold;
-        color: #7aa2f7;
+        color: $accent;
         height: 1;
         margin-bottom: 1;
     }
 
     FilenameInputDialog .dialog-hint {
-        color: #565f89;
+        color: $text-muted;
+        text-style: dim;
         height: 1;
         margin-bottom: 0;
     }
 
     FilenameInputDialog Input {
-        background: #292e42;
-        border: none;
-        color: #c0caf5;
-        height: 1;
+        background: transparent;
+        border: tall $foreground 20%;
+        color: ansi_default;
+        height: 3;
         padding: 0 1;
         width: 100%;
         margin-bottom: 1;
     }
 
     FilenameInputDialog Input:focus {
-        border: none;
-        background: #2f3549;
+        border: tall $accent 100%;
+        background: transparent;
     }
 
     FilenameInputDialog .section-label {
-        color: #3b4261;
+        color: $text-muted;
         height: 1;
-        text-style: italic;
+        text-style: italic dim;
         margin-bottom: 0;
     }
 

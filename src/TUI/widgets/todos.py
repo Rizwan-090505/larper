@@ -32,14 +32,15 @@ class TodoItem(ListItem):
         height: auto;
         min-height: 1;
         background: transparent;
-        color: #565f89;
+        color: $text-muted;
     }
     TodoItem Label {
         width: 1fr;
         height: auto;
+        background: transparent;
     }
-    TodoItem.highlighted { color: #9ece6a; }
-    TodoItem:hover { background: #292e42; }
+    TodoItem.highlighted { color: $accent; }
+    TodoItem:hover { background: $accent 14%; color: ansi_default; }
     """
 
     def __init__(
@@ -199,14 +200,15 @@ class TodosPanel(Widget):
     DEFAULT_CSS = """
     TodosPanel {
         height: 1fr;
-        background: #1e2030;
+        background: transparent;
         layout: vertical;
     }
     TodosPanel .panel-title {
-        color: #565f89;
+        color: $text-muted;
         padding: 0 2;
         height: 1;
-        background: #1e2030;
+        background: transparent;
+        border-bottom: tall $foreground 10%;
     }
     TodosPanel ListView {
         background: transparent;

@@ -90,7 +90,7 @@ async def async_main() -> None:
     # ------------------------------------------------------------------
     # 4. TUI — launches immediately; NLP warms up in the background.
     # ------------------------------------------------------------------
-    app = DevWorkspaceApp()
+    app = DevWorkspaceApp(ansi_color=True)
 
     try:
         await app.run_async()

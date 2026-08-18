@@ -54,8 +54,8 @@ class DevWorkspaceApp(App):
         ("ctrl+t", "toggle_vim_mode", "Toggle Vim"),
     ]
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, ansi_color: bool = True):
+        super().__init__(ansi_color=ansi_color)
         self._agent = PersonalManagerAgent()
         self._g_prefix = False
 

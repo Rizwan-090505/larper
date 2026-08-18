@@ -10,22 +10,23 @@ class StatusBar(Widget):
     DEFAULT_CSS = """
     StatusBar {
         height: 1;
-        background: #1e2030;
-        color: #565f89;
+        background: transparent;
+        color: $text-muted;
         padding: 0 1;
         dock: bottom;
-        border-top: solid #3b4261;
+        border-top: tall $foreground 20%;
         layout: horizontal;
     }
     StatusBar .status-left {
         background: transparent;
-        color: #565f89;
+        color: $text-muted;
         width: 1fr;
         height: 1;
     }
     StatusBar .status-right {
         background: transparent;
-        color: #3b4261;
+        color: $text-muted;
+        text-style: dim;
         width: auto;
         height: 1;
     }

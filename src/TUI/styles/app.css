@@ -1,9 +1,61 @@
-/* ─── Aether Theme palette ─────────────────────────────────────────────────── */
+/* ─── Terminal Theme (ANSI Mode) ────────────────────────────────────────── */
 
-Screen {
-    background: #1a1320;
-    color: #cdd6f4;
-    layout: vertical;
+/* ─── Background & Text Defaults ──────────────────────────────────────────── */
+
+Screen, Screen > * {
+    background: transparent;
+}
+
+Horizontal, Vertical, ScrollableContainer, Container, VerticalScroll {
+    background: transparent;
+}
+
+ListView, ListItem, ListItem > Static {
+    background: transparent;
+    color: ansi_default;
+}
+
+RichLog, Label, Static {
+    background: transparent;
+    color: ansi_default;
+}
+
+Input, TextArea {
+    color: ansi_default;
+    background: transparent;
+}
+
+Input:focus, TextArea:focus {
+    color: ansi_default;
+    background: transparent;
+}
+
+/* ─── Input & TextArea ANSI Rules ─────────────────────────────────────────── */
+
+Input > .input--cursor, TextArea > .text-area--cursor {
+    color: ansi_black;
+    background: ansi_white;
+}
+
+Input > .input--selection, TextArea > .text-area--selection {
+    background: $accent 30%;
+    color: ansi_white;
+}
+
+Input > .input--placeholder, TextArea > .text-area--placeholder {
+    color: $text-muted;
+    text-style: dim;
+}
+
+/* ─── Scrollbars ───────────────────────────────────────────────────────────── */
+
+* {
+    scrollbar-background: transparent;
+    scrollbar-corner-color: transparent;
+    scrollbar-color: $foreground 30%;
+    scrollbar-color-hover: $foreground 60%;
+    scrollbar-color-active: $accent;
+    scrollbar-size: 1 1;
 }
 
 /* ─── Layout ───────────────────────────────────────────────────────────────── */
@@ -11,37 +63,39 @@ Screen {
 MainLayout {
     height: 1fr;
     layout: horizontal;
+    background: transparent;
 }
 
 #sidebar-col {
     width: 18;
     height: 1fr;
     layout: vertical;
-    background: #201828;
-    border-right: solid #45475a;
+    background: transparent;
+    border-right: tall $foreground 20%;
 }
 
 #chat-col {
     width: 1fr;
     height: 1fr;
     layout: vertical;
-    background: #1a1320;
+    background: transparent;
 }
 
 #right-col {
     width: 28;
     height: 1fr;
     layout: vertical;
-    background: #201828;
-    border-left: solid #45475a;
+    background: transparent;
+    border-left: tall $foreground 20%;
 }
 
 /* ─── Sidebar ──────────────────────────────────────────────────────────────── */
 
 SidebarPanel {
     height: 1fr;
-    background: #201828;
+    background: transparent;
     padding: 1 0;
+    layout: vertical;
 }
 
 SidebarPanel:focus {
@@ -49,7 +103,7 @@ SidebarPanel:focus {
 }
 
 SidebarPanel .logo {
-    color: #f9e2af;
+    color: $accent;
     text-style: bold;
     padding: 0 2;
     height: 2;
@@ -58,77 +112,143 @@ SidebarPanel .logo {
 SidebarPanel .nav-item {
     padding: 0 2;
     height: 1;
-    color: #7f849c;
+    color: $text-muted;
+    background: transparent;
 }
 
 SidebarPanel .nav-item:hover {
-    color: #ffffff;
-    background: #2d2238;
+    color: ansi_default;
+    background: $accent 14%;
 }
 
 SidebarPanel .nav-item.active {
-    color: #94e2d5;
+    color: $accent;
     text-style: bold;
-    background: #2d2238;
+    background: $accent 24%;
 }
 
 SidebarPanel .nav-item.focused-cursor {
-    color: #ffffff;
-    background: #392b47;
+    color: ansi_default;
+    background: $accent 24%;
 }
 
 SidebarPanel .nav-item.active.focused-cursor {
-    color: #94e2d5;
-    background: #392b47;
+    color: $accent;
+    background: $accent 30%;
     text-style: bold;
 }
 
 SidebarPanel .hint {
-    color: #45475a;
+    color: $text-muted;
+    text-style: dim;
     padding: 0 2;
     height: 1;
 }
 
 SidebarPanel .divider {
-    color: #45475a;
+    color: $foreground 20%;
     height: 1;
     padding: 0 1;
 }
 
 SidebarPanel .nav-label {
-    color: #45475a;
+    color: $text-muted;
+    text-style: dim;
     padding: 1 2 0 2;
     height: 2;
 }
 
-/* ─── Agent Panel ──────────────────────────────────────────────────────────── */
+/* ─── Agent Panel & Chat ───────────────────────────────────────────────────── */
 
 AgentPanel {
     height: 1fr;
-    background: #1a1320;
+    background: transparent;
     border: none;
 }
 
+AgentPanel .title-bar {
+    background: transparent;
+    height: 1;
+    layout: horizontal;
+    border-bottom: tall $foreground 10%;
+}
+
 AgentPanel .panel-title {
-    background: #201828;
-    color: #7f849c;
-    padding: 0 2;
+    background: transparent;
+    color: $text-muted;
+    padding: 0 1;
     height: 1;
 }
 
-AgentPanel RichLog {
+AgentPanel #copy-last-btn {
+    min-width: 12;
+    width: auto;
+    height: 1;
+    min-height: 1;
+    border: none;
+    padding: 0 1;
     background: transparent;
-    padding: 0 2;
-    color: #cdd6f4;
-    scrollbar-color: #45475a;
-    scrollbar-size: 1 1;
+    color: $accent;
+    content-align: center middle;
+}
+
+AgentPanel #copy-last-btn:hover {
+    background: $accent 14%;
+    color: ansi_default;
+}
+
+AgentPanel #output-log {
+    background: transparent;
+    border: none;
+    height: 1fr;
+    padding: 0 1;
+}
+
+ChatMessage {
+    height: auto;
+    margin: 0 0 1 0;
+    background: transparent;
+}
+
+ChatMessage .msg-header {
+    height: 1;
+    layout: horizontal;
+    background: transparent;
+}
+
+ChatMessage .msg-role {
+    width: 1fr;
+    background: transparent;
+}
+
+ChatMessage .msg-copy-btn {
+    min-width: 10;
+    width: auto;
+    height: 1;
+    min-height: 1;
+    border: none;
+    padding: 0 1;
+    background: transparent;
+    color: $text-muted;
+    content-align: center middle;
+}
+
+ChatMessage .msg-copy-btn:hover {
+    background: $accent 14%;
+    color: ansi_default;
+}
+
+ChatMessage .msg-body {
+    padding: 0 0;
+    height: auto;
+    background: transparent;
 }
 
 ChatInput {
     height: auto;
     max-height: 8;
-    background: #201828;
-    border-top: solid #45475a;
+    background: transparent;
+    border-top: tall $foreground 20%;
     border-bottom: none;
     border-left: none;
     border-right: none;
@@ -140,7 +260,7 @@ ChatInput {
 ChatInput #prompt-label {
     width: 4;
     height: 3;
-    color: #f9e2af;
+    color: $accent;
     padding: 1 1 0 1;
     text-style: bold;
     content-align: left top;
@@ -152,11 +272,9 @@ ChatInput TextArea {
     height: auto;
     max-height: 8;
     min-height: 3;
-    color: #ffffff;
+    color: ansi_default;
     padding: 1 0;
     width: 1fr;
-    scrollbar-color: #45475a;
-    scrollbar-size: 1 1;
 }
 
 ChatInput TextArea:focus {
@@ -164,29 +282,43 @@ ChatInput TextArea:focus {
     background: transparent;
 }
 
+ChatInput #nav-hint {
+    width: auto;
+    height: 3;
+    color: $text-muted;
+    text-style: dim;
+    padding: 1 1 0 1;
+    content-align: right top;
+}
+
 /* ─── Notes Panel ──────────────────────────────────────────────────────────── */
 
 NotesPanel {
     height: 2fr;
-    background: #201828;
-    border-bottom: solid #45475a;
+    background: transparent;
+    border-bottom: tall $foreground 20%;
     border-top: none;
     border-left: none;
     border-right: none;
 }
 
+NotesPanel.hidden {
+    display: none;
+}
+
 NotesPanel .panel-title {
-    color: #7f849c;
+    color: $text-muted;
     padding: 0 2;
     height: 1;
-    background: #201828;
+    background: transparent;
+    border-bottom: tall $foreground 10%;
 }
 
 NotesPanel #notes-filter {
     height: 1;
     border: none;
-    background: #2d2238;
-    color: #ffffff;
+    background: $accent 14%;
+    color: ansi_default;
     padding: 0 2;
     display: none;
 }
@@ -198,43 +330,46 @@ NotesPanel #notes-filter.visible {
 NotesPanel ListView {
     background: transparent;
     border: none;
+    height: 1fr;
 }
 
 NoteItem {
     padding: 0 1;
     height: 1;
     background: transparent;
-    color: #7f849c;
+    color: $text-muted;
 }
 
 NoteItem:hover {
-    background: #2d2238;
-    color: #ffffff;
+    background: $accent 14%;
+    color: ansi_default;
 }
 
 NoteItem.-highlight {
-    background: #2d2238;
-    color: #94e2d5;
+    background: $accent 24%;
+    color: $accent;
 }
 
 /* ─── Todos Panel ──────────────────────────────────────────────────────────── */
 
 TodosPanel {
     height: 1fr;
-    background: #201828;
+    background: transparent;
     border: none;
 }
 
 TodosPanel .panel-title {
-    color: #7f849c;
+    color: $text-muted;
     padding: 0 2;
     height: 1;
-    background: #201828;
+    background: transparent;
+    border-bottom: tall $foreground 10%;
 }
 
 TodosPanel ListView {
     background: transparent;
     border: none;
+    height: 1fr;
 }
 
 TodoItem {
@@ -242,62 +377,170 @@ TodoItem {
     height: auto;
     min-height: 1;
     background: transparent;
-    color: #7f849c;
+    color: $text-muted;
 }
 
 TodoItem Label {
     width: 1fr;
     height: auto;
+    background: transparent;
+}
+
+TodoItem:hover {
+    background: $accent 14%;
+    color: ansi_default;
 }
 
 TodoItem.highlighted {
-    color: #a6e3a1;
+    color: $accent;
 }
 
 /* ─── Status Bar ───────────────────────────────────────────────────────────── */
 
 StatusBar {
     height: 1;
-    background: #201828;
-    color: #7f849c;
+    background: transparent;
+    color: $text-muted;
     dock: bottom;
-    border-top: solid #45475a;
+    border-top: tall $foreground 20%;
     layout: horizontal;
     padding: 0 1;
 }
 
 StatusBar .status-left {
     background: transparent;
-    color: #7f849c;
+    color: $text-muted;
     width: 1fr;
     height: 1;
 }
 
 StatusBar .status-right {
     background: transparent;
-    color: #45475a;
+    color: $text-muted;
+    text-style: dim;
     width: auto;
     height: 1;
 }
 
-/* ─── Scrollbars ───────────────────────────────────────────────────────────── */
-
-* {
-    scrollbar-color: #45475a;
-    scrollbar-color-hover: #7f849c;
-    scrollbar-background: #1a1320;
-    scrollbar-size: 1 1;
-}
-
-/* ─── Search Modal ─────────────────────────────────────────────────────────── */
+/* ─── Modals and Dialogs ───────────────────────────────────────────────────── */
 
 SearchModal {
     align: center middle;
+    background: transparent;
 }
 
 #search-dialog {
     width: 70;
     height: 24;
-    border: solid #94e2d5;
-    background: #201828;
+    border: tall $foreground 10%;
+    background: ansi_default;
+}
+
+SearchModal #search-header {
+    background: $accent 24%;
+    color: ansi_default;
+    height: 1;
+    padding: 0 1;
+    text-style: bold;
+}
+
+SearchModal #search-input {
+    height: 3;
+    border: tall $foreground 20%;
+    background: transparent;
+    color: ansi_default;
+    margin: 1 1 0 1;
+}
+
+SearchModal #search-input:focus {
+    border: tall $accent 100%;
+}
+
+SearchModal #search-count {
+    height: 1;
+    padding: 0 2;
+    color: $text-muted;
+    text-style: dim;
+}
+
+SearchModal #search-results {
+    height: 1fr;
+    border: tall $foreground 10%;
+    background: transparent;
+    margin: 0 1;
+}
+
+SearchModal #search-footer {
+    height: 1;
+    padding: 0 2;
+    color: $text-muted;
+    text-style: dim;
+    margin: 0 1 1 1;
+}
+
+FilenameInputDialog {
+    align: center middle;
+    background: transparent;
+}
+
+FilenameInputDialog > Vertical {
+    width: 64;
+    height: 28;
+    border: tall $foreground 10%;
+    background: ansi_default;
+    padding: 1 2;
+    layout: vertical;
+}
+
+FilenameInputDialog .dialog-title {
+    text-style: bold;
+    color: $accent;
+    height: 1;
+    margin-bottom: 1;
+}
+
+FilenameInputDialog .dialog-hint {
+    color: $text-muted;
+    text-style: dim;
+    height: 1;
+    margin-bottom: 0;
+}
+
+FilenameInputDialog Input {
+    background: transparent;
+    border: tall $foreground 20%;
+    color: ansi_default;
+    height: 3;
+    padding: 0 1;
+    width: 100%;
+    margin-bottom: 1;
+}
+
+FilenameInputDialog Input:focus {
+    border: tall $accent 100%;
+    background: transparent;
+}
+
+FilenameInputDialog .section-label {
+    color: $text-muted;
+    height: 1;
+    text-style: italic dim;
+    margin-bottom: 0;
+}
+
+NotePickerItem {
+    padding: 0 1;
+    height: 1;
+    background: transparent;
+    color: $text-muted;
+}
+
+NotePickerItem:hover {
+    background: $accent 14%;
+    color: ansi_default;
+}
+
+NotePickerItem.-highlight {
+    background: $accent 24%;
+    color: $accent;
 }

@@ -19,23 +19,27 @@ class MainLayout(Widget):
     MainLayout {
         layout: horizontal;
         height: 1fr;
+        background: transparent;
     }
     MainLayout #sidebar-col {
         width: 18;
         layout: vertical;
         height: 1fr;
-        border-right: solid #3b4261;
+        background: transparent;
+        border-right: tall $foreground 20%;
     }
     MainLayout #chat-col {
         width: 1fr;
         layout: vertical;
         height: 1fr;
+        background: transparent;
     }
     MainLayout #right-col {
         width: 28;
         layout: vertical;
         height: 1fr;
-        border-left: solid #3b4261;
+        background: transparent;
+        border-left: tall $foreground 20%;
     }
     """
 

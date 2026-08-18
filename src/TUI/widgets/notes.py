@@ -98,10 +98,10 @@ class NoteItem(ListItem):
         padding: 0 1;
         height: 1;
         background: transparent;
-        color: #565f89;
+        color: $text-muted;
     }
-    NoteItem:hover { background: #292e42; color: #c0caf5; }
-    NoteItem.-highlight { background: #292e42; color: #7aa2f7; }
+    NoteItem:hover { background: $accent 14%; color: ansi_default; }
+    NoteItem.-highlight { background: $accent 24%; color: $accent; }
     """
 
     def __init__(self, filename: str, filepath: str = "", subdir: str = ""):
@@ -135,24 +135,25 @@ class NotesPanel(Widget):
     DEFAULT_CSS = """
     NotesPanel {
         height: 2fr;
-        background: #1e2030;
+        background: transparent;
         layout: vertical;
-        border-bottom: solid #3b4261;
+        border-bottom: tall $foreground 20%;
     }
     NotesPanel.hidden {
         display: none;
     }
     NotesPanel .panel-title {
-        color: #565f89;
+        color: $text-muted;
         padding: 0 2;
         height: 1;
-        background: #1e2030;
+        background: transparent;
+        border-bottom: tall $foreground 10%;
     }
     NotesPanel #notes-filter {
         height: 1;
         border: none;
-        background: #292e42;
-        color: #c0caf5;
+        background: $accent 14%;
+        color: ansi_default;
         padding: 0 2;
         display: none;
     }

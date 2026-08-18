@@ -32,52 +32,54 @@ class SidebarPanel(Widget):
     DEFAULT_CSS = """
     SidebarPanel {
         height: 1fr;
-        background: #1e2030;
+        background: transparent;
         padding: 1 0;
         layout: vertical;
     }
     SidebarPanel .logo {
-        color: #e0af68;
+        color: $accent;
         text-style: bold;
         padding: 0 2;
         height: 2;
     }
     SidebarPanel .divider {
-        color: #3b4261;
+        color: $foreground 20%;
         height: 1;
         padding: 0 1;
     }
     SidebarPanel .nav-item {
         padding: 0 2;
         height: 1;
-        color: #565f89;
+        color: $text-muted;
+        background: transparent;
     }
     SidebarPanel .nav-item:hover {
-        color: #c0caf5;
-        background: #292e42;
+        color: ansi_default;
+        background: $accent 14%;
     }
     SidebarPanel .nav-item.active {
-        color: #7aa2f7;
+        color: $accent;
         text-style: bold;
-        background: #292e42;
+        background: $accent 24%;
     }
     SidebarPanel .nav-item.focused-cursor {
-        color: #c0caf5;
-        background: #2f3549;
+        color: ansi_default;
+        background: $accent 24%;
     }
     SidebarPanel .nav-item.active.focused-cursor {
-        color: #7aa2f7;
-        background: #2f3549;
+        color: $accent;
+        background: $accent 30%;
         text-style: bold;
     }
     SidebarPanel .nav-label {
-        color: #3b4261;
+        color: $text-muted;
         padding: 1 2 0 2;
         height: 2;
-        text-style: italic;
+        text-style: dim;
     }
     SidebarPanel .hint {
-        color: #3b4261;
+        color: $text-muted;
+        text-style: dim;
         padding: 0 2;
         height: 1;
     }
